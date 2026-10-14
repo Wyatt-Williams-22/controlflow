@@ -11,10 +11,12 @@ import { z } from "zod";
  *   response_format: { type: "json_schema", json_schema: { name, schema, strict: true } }
  *   The JSON text comes back on choices[0].message.content.
  *
- * The docs do not set a request timeout, so this client aborts after 60 seconds.
+ * The docs do not set a request timeout. Direct calls, including smoke, abort
+ * after 60 seconds unless GROK_TIMEOUT_MS or timeoutMs is set. Analysis uses
+ * a longer default (180 seconds) from the workflow.
  * Retry up to twice, with exponential backoff, only for HTTP 429, HTTP 5xx,
- * and network or timeout errors. Never retry 401, 403 (including a credits
- * or spending-limit 403), an invalid-key 400, or a schema failure.
+ * and connection errors. Never retry a client timeout, 401, 403 (including a
+ * credits or spending-limit 403), an invalid-key 400, or a schema failure.
  *
  * This file logs a category, a status, and an attempt number. It does not log
  * the API key, the prompt, or the response body.
@@ -23,9 +25,15 @@ import { z } from "zod";
 export const GROK_CHAT_COMPLETIONS_URL = "https://api.x.ai/v1/chat/completions";
 export const DEFAULT_GROK_MODEL = "grok-4.7";
 
-const DEFAULT_TIMEOUT_MS = 60_000;
+/** Used when a caller does not set timeoutMs or GROK_TIMEOUT_MS. Smoke stays on this. */
+export const DEFAULT_CLIENT_TIMEOUT_MS = 60_000;
+/** Analysis calls. One slow structured response can outlast the smoke default. */
+export const DEFAULT_ANALYSIS_TIMEOUT_MS = 180_000;
+const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_MAX_TOKENS = 1_024;
-const MAX_TOKENS_CAP = 4_096;
+/** Analysis asks for this many tokens. The client cap is higher so a caller can go further. */
+export const ANALYSIS_MAX_TOKENS = 8_192;
+const MAX_TOKENS_CAP = 16_384;
 const MAX_RETRIES = 2;
 const BACKOFF_BASE_MS = 250;
 const MAX_RESPONSE_CHARS = 1_000_000;
@@ -37,6 +45,7 @@ export const grokErrorCategories = [
   "rate_limited",
   "server_error",
   "network",
+  "timeout",
   "schema",
   "invalid_response",
   "bad_request",
@@ -73,19 +82,41 @@ export type GrokClientOptions = {
   apiKey?: string;
   model?: string;
   maxRetries?: number;
-  env?: { XAI_API_KEY?: string; GROK_MODEL?: string };
+  env?: { XAI_API_KEY?: string; GROK_MODEL?: string; GROK_TIMEOUT_MS?: string };
   /** The workflow turns this off. Smoke and unit tests keep the category line. */
   logFailures?: boolean;
 };
 
-type EnvLike = { XAI_API_KEY?: string; GROK_MODEL?: string };
+type EnvLike = { XAI_API_KEY?: string; GROK_MODEL?: string; GROK_TIMEOUT_MS?: string };
 
 function readEnv(options: GrokClientOptions): EnvLike {
   if (options.env) return options.env;
   return {
     XAI_API_KEY: process.env.XAI_API_KEY,
     GROK_MODEL: process.env.GROK_MODEL,
+    GROK_TIMEOUT_MS: process.env.GROK_TIMEOUT_MS,
   };
+}
+
+/**
+ * explicit timeoutMs wins, then GROK_TIMEOUT_MS, then fallback.
+ * A blank or non-numeric env value is ignored. Values above 10 minutes are capped.
+ */
+export function resolveTimeoutMs(explicit: number | undefined, envValue: string | undefined, fallback: number): number {
+  const chosen = usableTimeout(explicit) ?? parseTimeoutMs(envValue) ?? fallback;
+  return Math.min(Math.max(1, chosen), MAX_TIMEOUT_MS);
+}
+
+function usableTimeout(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value < 1) return undefined;
+  return Math.floor(value);
+}
+
+function parseTimeoutMs(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  return usableTimeout(Number(trimmed));
 }
 
 export function boundedMaxTokens(requested: number | undefined): number {
@@ -105,7 +136,7 @@ export async function completeStructured<T>(
   const model = configuredModel || DEFAULT_GROK_MODEL;
   const fetchImpl = options.fetchImpl ?? fetch;
   const sleep = options.sleep ?? defaultSleep;
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = resolveTimeoutMs(options.timeoutMs, env.GROK_TIMEOUT_MS, DEFAULT_CLIENT_TIMEOUT_MS);
   const maxRetries = options.maxRetries ?? MAX_RETRIES;
   const reportFailure = (failure: GrokFailure, attempt: number) => {
     if (options.logFailures === false) return;
@@ -165,7 +196,12 @@ export async function completeStructured<T>(
         timeoutMs,
       );
     } catch (error) {
-      lastFailure = fail("network", networkMessage(error));
+      if (isClientTimeout(error)) {
+        const failure = fail("timeout", "The model call timed out.");
+        reportFailure(failure, attempt);
+        return failure;
+      }
+      lastFailure = fail("network", networkMessage());
       reportFailure(lastFailure, attempt);
       continue;
     }
@@ -308,8 +344,18 @@ function httpMessage(category: GrokErrorCategory, status: number): string {
   return `model API rejected the request (${status})`;
 }
 
-function networkMessage(error: unknown): string {
-  if (error instanceof Error && error.name === "AbortError") return "model request timed out";
+class ClientTimeoutError extends Error {
+  constructor() {
+    super("The model call timed out.");
+    this.name = "ClientTimeoutError";
+  }
+}
+
+function isClientTimeout(error: unknown): boolean {
+  return error instanceof ClientTimeoutError || (error instanceof Error && error.name === "AbortError");
+}
+
+function networkMessage(): string {
   return "network error calling the model API";
 }
 
@@ -326,9 +372,16 @@ async function fetchWithTimeout(
   timeoutMs: number,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
     return await fetchImpl(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) throw new ClientTimeoutError();
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -357,6 +410,9 @@ async function readSuccess<T>(
   }
 
   const content = readMessageContent(payload);
+  if (content.kind === "truncated") {
+    return fail("invalid_response", "The model response was cut off because it reached max_tokens.", response.status);
+  }
   if (content.kind === "refusal") {
     return fail("invalid_response", "model refused the request", response.status);
   }
@@ -386,11 +442,13 @@ async function readSuccess<T>(
 
 function readMessageContent(
   payload: unknown,
-): { kind: "text"; text: string } | { kind: "refusal" } | { kind: "missing" } {
+): { kind: "text"; text: string } | { kind: "truncated" } | { kind: "refusal" } | { kind: "missing" } {
   if (typeof payload !== "object" || payload === null) return { kind: "missing" };
   const choices = (payload as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) return { kind: "missing" };
-  const message = (choices[0] as { message?: unknown } | undefined)?.message;
+  const choice = choices[0] as { finish_reason?: unknown; message?: unknown } | undefined;
+  if (choice?.finish_reason === "length") return { kind: "truncated" };
+  const message = choice?.message;
   if (typeof message !== "object" || message === null) return { kind: "missing" };
   const record = message as { content?: unknown; refusal?: unknown };
   if (typeof record.refusal === "string" && record.refusal.length > 0 && record.content == null) {

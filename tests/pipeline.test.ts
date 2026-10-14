@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,8 @@ import replayAssessment from "../fixtures/replay/retention-verified.json";
 import { TransitionError, assertTransition, countTickets, createJob, getDatabase, resetDatabaseForTests, transitionJob } from "../src/storage/db";
 import { LOCAL_DRAFT_LABEL, LOCAL_DRAFT_NOTICE, REPLAY_NOTICE, type JobView } from "../src/types/job-view";
 import { pollOnce, recoverInterrupted } from "../src/worker";
+import { ANALYSIS_MAX_TOKENS } from "../src/integrations/grok";
+import { analysisTimeoutMs } from "../src/workflows/analyze-control-event";
 import { loadEvent, repoRoot } from "./helpers";
 
 const KEY = "test-key-do-not-log";
@@ -99,6 +102,55 @@ describe("job pipeline", () => {
     expect(view.errorCategory).toBe("server_error");
     expect(view.assessment).toBeNull();
     expect(view.ticket).toBeNull();
+    expect(JSON.stringify(view)).not.toContain(KEY);
+    expect(logs.join("\n")).not.toContain(KEY);
+  });
+
+  it("uses the analysis token budget and does not retry a client timeout", async () => {
+    delete process.env.GROK_TIMEOUT_MS;
+    expect(analysisTimeoutMs({})).toBe(180_000);
+    process.env.GROK_TIMEOUT_MS = "1000";
+    expect(analysisTimeoutMs({})).toBe(1_000);
+    expect(analysisTimeoutMs({ env: {} })).toBe(180_000);
+    expect(analysisTimeoutMs({ env: { GROK_TIMEOUT_MS: "120000" } })).toBe(120_000);
+    expect(analysisTimeoutMs({ timeoutMs: 10, env: { GROK_TIMEOUT_MS: "120000" } })).toBe(10);
+    delete process.env.GROK_TIMEOUT_MS;
+
+    const id = await enqueue("live");
+    let calls = 0;
+    let requestBody: Record<string, unknown> | undefined;
+    await pollOnce(getDatabase(), {
+      repoRoot,
+      grok: grokOptions(async (_url, init) => {
+        calls += 1;
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const error = new Error(`aborted while sending Bearer ${KEY}`);
+        error.name = "AbortError";
+        throw error;
+      }),
+    });
+    const view = await readJob(id);
+    expect(calls).toBe(1);
+    expect(view.state).toBe("failed");
+    expect(view.errorCategory).toBe("timeout");
+    expect(view.errorMessage).toBe("The model call timed out.");
+    expect(view.assessment).toBeNull();
+    expect(requestBody?.max_tokens).toBe(ANALYSIS_MAX_TOKENS);
+    const messages = requestBody?.messages as Array<{ role: string; content: string }>;
+    const system = messages.find((message) => message.role === "system")?.content ?? "";
+    const user = messages.find((message) => message.role === "user")?.content ?? "";
+    expect(system).toContain("untrusted data");
+    expect(system).toContain("Never infer a retention period");
+    expect(system).toContain("insufficient_evidence");
+    expect(user).toContain("EV-underwriting-api-1");
+    expect(user).toContain("2555");
+    expect(user).toContain("2190");
+    expect(user).toContain("1|");
+    expect(user).not.toContain("2026-10-14T15:00:00.000Z");
+    const source = fs.readFileSync(path.join(repoRoot, "fixtures/repos/underwriting-api/src/persist-cashflow.ts"));
+    const hash = crypto.createHash("sha256").update(source).digest("hex");
+    expect(user).not.toContain(hash);
+    expect(user.length).toBeLessThan(8_000);
     expect(JSON.stringify(view)).not.toContain(KEY);
     expect(logs.join("\n")).not.toContain(KEY);
   });

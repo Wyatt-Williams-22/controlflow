@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
+  DEFAULT_ANALYSIS_TIMEOUT_MS,
+  DEFAULT_CLIENT_TIMEOUT_MS,
   DEFAULT_GROK_MODEL,
   GROK_CHAT_COMPLETIONS_URL,
   completeStructured,
+  resolveTimeoutMs,
   type GrokClientOptions,
 } from "../src/integrations/grok";
 
@@ -50,6 +53,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.XAI_API_KEY;
   delete process.env.GROK_MODEL;
+  delete process.env.GROK_TIMEOUT_MS;
 });
 
 function options(fetchImpl: typeof fetch, extra: Partial<GrokClientOptions> = {}): GrokClientOptions {
@@ -100,7 +104,7 @@ describe("grok client", () => {
     expect(calls[0]?.init.signal).toBeInstanceOf(AbortSignal);
     expect(bodyAt(calls, 0)).toMatchObject({
       model: DEFAULT_GROK_MODEL,
-      max_tokens: 4096,
+      max_tokens: 16384,
       response_format: {
         type: "json_schema",
         json_schema: { name: "smoke_pong", schema: echoJsonSchema, strict: true },
@@ -271,22 +275,53 @@ describe("grok client", () => {
     expect(delays).toEqual([250, 500]);
   });
 
-  it("retries a timeout or network error and keeps the failure message generic", async () => {
-    const recovered = mockFetch(async (call) => {
-      if (call === 1) {
-        const error = new Error(`connect failed while sending Bearer ${KEY}`);
-        error.name = "AbortError";
-        throw error;
-      }
-      return completion(JSON.stringify({ ok: true, echo: "pong" }));
+  it("does not retry a client timeout and keeps the message fixed", async () => {
+    const aborted = mockFetch(async () => {
+      const error = new Error(`The operation was aborted. Bearer ${KEY}`);
+      error.name = "AbortError";
+      throw error;
     });
-    const result = await completeStructured(args, options(recovered.fetchImpl));
-    expect(result).toMatchObject({ ok: true, data: { echo: "pong" } });
-    expect(recovered.calls).toHaveLength(2);
-    expect(logs.join("\n")).toContain("category=network");
+    const abortedResult = await completeStructured(args, options(aborted.fetchImpl));
+    expect(abortedResult).toEqual({ ok: false, category: "timeout", message: "The model call timed out." });
+    expect(aborted.calls).toHaveLength(1);
+    expect(delays).toEqual([]);
+    expect(JSON.stringify(abortedResult)).not.toContain(KEY);
+    expect(logs.join("\n")).toContain("category=timeout");
     expect(logs.join("\n")).not.toContain(KEY);
 
     delays = [];
+    logs.length = 0;
+    const hung = {
+      calls: 0,
+      fetchImpl: (async (_url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        hung.calls += 1;
+        return await new Promise<Response>((_resolve, reject) => {
+          const fail = () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          };
+          if (!init?.signal) {
+            reject(new Error("missing signal"));
+            return;
+          }
+          if (init.signal.aborted) fail();
+          else init.signal.addEventListener("abort", fail, { once: true });
+        });
+      }) as typeof fetch,
+    };
+    const started = Date.now();
+    const hungResult = await completeStructured(
+      args,
+      options(hung.fetchImpl, { env: { XAI_API_KEY: KEY, GROK_TIMEOUT_MS: "40" } }),
+    );
+    expect(hungResult).toEqual({ ok: false, category: "timeout", message: "The model call timed out." });
+    expect(hung.calls).toBe(1);
+    expect(delays).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("retries a connection error and keeps the failure message generic", async () => {
     const failed = mockFetch(async () => {
       throw new Error("socket hang up");
     });
@@ -294,5 +329,53 @@ describe("grok client", () => {
     expect(failure).toEqual({ ok: false, category: "network", message: "network error calling the model API" });
     expect(failed.calls).toHaveLength(3);
     expect(JSON.stringify(failure)).not.toContain("socket hang up");
+  });
+
+  it("resolves GROK_TIMEOUT_MS above the client default and below the analysis default", () => {
+    expect(resolveTimeoutMs(undefined, undefined, DEFAULT_CLIENT_TIMEOUT_MS)).toBe(60_000);
+    expect(resolveTimeoutMs(undefined, undefined, DEFAULT_ANALYSIS_TIMEOUT_MS)).toBe(180_000);
+    expect(resolveTimeoutMs(undefined, "90000", DEFAULT_ANALYSIS_TIMEOUT_MS)).toBe(90_000);
+    expect(resolveTimeoutMs(5_000, "90000", DEFAULT_ANALYSIS_TIMEOUT_MS)).toBe(5_000);
+    expect(resolveTimeoutMs(undefined, "soon", DEFAULT_CLIENT_TIMEOUT_MS)).toBe(60_000);
+    expect(resolveTimeoutMs(undefined, "999999999", DEFAULT_CLIENT_TIMEOUT_MS)).toBe(600_000);
+  });
+
+  it("reports finish_reason=length as a cut-off response, not a schema error", async () => {
+    const partial = `{"ok":true,"echo":"${KEY}`;
+    const truncated = mockFetch(
+      async () =>
+        new Response(
+          JSON.stringify({ choices: [{ finish_reason: "length", message: { role: "assistant", content: partial } }] }),
+          { status: 200 },
+        ),
+    );
+    const truncatedResult = await completeStructured(args, options(truncated.fetchImpl));
+    expect(truncatedResult).toEqual({
+      ok: false,
+      category: "invalid_response",
+      message: "The model response was cut off because it reached max_tokens.",
+      status: 200,
+    });
+    expect(truncated.calls).toHaveLength(1);
+    expect(delays).toEqual([]);
+    expect(JSON.stringify(truncatedResult)).not.toContain(KEY);
+    expect(JSON.stringify(truncatedResult)).not.toContain("finish_reason");
+
+    const parsed = mockFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ finish_reason: "length", message: { content: JSON.stringify({ ok: true, echo: "pong" }) } }],
+          }),
+          { status: 200 },
+        ),
+    );
+    const parsedResult = await completeStructured(args, options(parsed.fetchImpl));
+    expect(parsedResult).toMatchObject({
+      ok: false,
+      category: "invalid_response",
+      message: "The model response was cut off because it reached max_tokens.",
+    });
+    expect(parsed.calls).toHaveLength(1);
   });
 });

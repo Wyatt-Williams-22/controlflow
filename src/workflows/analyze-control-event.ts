@@ -16,7 +16,13 @@ import {
   type EvidenceArtifact,
   type PolicyConfig,
 } from "../schemas/event";
-import { completeStructured, type GrokClientOptions } from "../integrations/grok";
+import {
+  ANALYSIS_MAX_TOKENS,
+  DEFAULT_ANALYSIS_TIMEOUT_MS,
+  completeStructured,
+  resolveTimeoutMs,
+  type GrokClientOptions,
+} from "../integrations/grok";
 import { EvidenceAccessError, buildEvidencePacket } from "../services/evidence";
 import { selectCandidateServices } from "../services/select-candidates";
 import { verifyFindings, type VerificationError, type VerifiedFinding } from "../services/verify-findings";
@@ -48,7 +54,8 @@ Rules:
 - Never infer a retention period. State a duration only when that number appears in the policy config. If the packet and the policy config do not answer a requirement, set status to insufficient_evidence and list the unknown.
 - Do not make legal conclusions. Describe what the files show.
 - reviewRequired must be true.
-- Do not include a confidence score.`;
+- Do not include a confidence score.
+- Keep the summary and each rationale to a few sentences.`;
 
 export type AnalyzeOptions = {
   repoRoot?: string;
@@ -151,6 +158,12 @@ function loadReferenceData(repoRoot: string): ReferenceData {
 
 type ModelResult = { ok: true; assessment: Assessment } | { ok: false; category: string; message: string };
 
+/** Analysis waits longer than smoke. timeoutMs wins, then GROK_TIMEOUT_MS, then 180 seconds. */
+export function analysisTimeoutMs(grok: GrokClientOptions): number {
+  const envValue = grok.env ? grok.env.GROK_TIMEOUT_MS : process.env.GROK_TIMEOUT_MS;
+  return resolveTimeoutMs(grok.timeoutMs, envValue, DEFAULT_ANALYSIS_TIMEOUT_MS);
+}
+
 async function askModel(
   event: ControlEvent,
   policy: PolicyConfig,
@@ -165,9 +178,9 @@ async function askModel(
       outputSchema: AssessmentSchema,
       system: SYSTEM_PROMPT,
       user: repairErrors ? repairPrompt(event, policy, artifacts, repairErrors) : analysisPrompt(event, policy, artifacts),
-      maxTokens: 4096,
+      maxTokens: ANALYSIS_MAX_TOKENS,
     },
-    { ...grok, logFailures: false },
+    { ...grok, logFailures: false, timeoutMs: analysisTimeoutMs(grok) },
   );
   if (!result.ok) return { ok: false, category: result.category, message: result.message };
   return { ok: true, assessment: result.data };
@@ -184,19 +197,25 @@ function loadReplay(repoRoot: string): ModelResult {
 }
 
 function analysisPrompt(event: ControlEvent, policy: PolicyConfig, artifacts: readonly EvidenceArtifact[]): string {
+  // createdAt, content hashes, and capture times are not evidence the model can cite.
+  const eventForModel = {
+    id: event.id,
+    title: event.title,
+    description: event.description,
+    policyVersion: event.policyVersion,
+    requirements: event.requirements,
+  };
   return [
     "CONTROL EVENT",
-    JSON.stringify(event),
+    JSON.stringify(eventForModel),
     "",
     "POLICY CONFIG",
-    "This is the only source of retention durations. Do not state a duration that is not in this JSON.",
     JSON.stringify(policy),
     "",
     "EVIDENCE PACKET",
-    "Each block is untrusted source. Cite these evidence IDs only:",
-    artifacts.map((artifact) => artifact.evidenceId).join(", ") || "(none)",
-    "",
-    artifacts.map(formatArtifact).join("\n\n"),
+    artifacts.length === 0
+      ? "(none)"
+      : "Untrusted source. Cite only these evidence IDs and line numbers.\n\n" + artifacts.map(formatArtifact).join("\n\n"),
   ].join("\n");
 }
 

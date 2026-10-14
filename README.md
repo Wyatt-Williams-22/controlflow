@@ -20,7 +20,7 @@ npm run worker
 
 `npm test` does not call xAI. `npm run smoke` makes one real Chat Completions call when `XAI_API_KEY` is set. Copy `.env.example` to `.env.local` and fill in the key. `.env.local` and `data/*.db` are gitignored. When the key is missing, smoke exits with an error and does not print a key.
 
-`GROK_MODEL` defaults to `grok-4.7`. The dev server and the worker share `data/controlflow.db` (override with `CONTROLFLOW_DB`).
+`GROK_MODEL` defaults to `grok-4.7`. `GROK_TIMEOUT_MS` overrides the abort deadline for every model call. When it is unset, smoke aborts after 60 seconds and analysis aborts after 180 seconds. The dev server and the worker share `data/controlflow.db` (override with `CONTROLFLOW_DB`).
 
 ## Where the Grok call is
 
@@ -30,7 +30,7 @@ The only model call is `completeStructured` in `src/integrations/grok.ts`. It se
 - `Authorization: Bearer <XAI_API_KEY>`
 - `response_format: { type: "json_schema", json_schema: { name, schema, strict: true } }`
 
-That request shape matches the [xAI structured outputs guide](https://docs.x.ai/docs/guides/structured-outputs). The JSON text is read from `choices[0].message.content` and checked with Zod. The client aborts after 60 seconds, caps `max_tokens` at 4096, and retries at most twice (250ms, then 500ms) for HTTP 429, HTTP 5xx, and network or timeout errors. It does not retry HTTP 401, HTTP 403, an invalid-key HTTP 400, or a schema failure. A 403 whose body says the team is out of credits or over its spending limit is `quota_exhausted` with a fixed message. Other 401 and 403 responses are `unauthorized`. Its own log line is a category, a status, and an attempt number.
+That request shape matches the [xAI structured outputs guide](https://docs.x.ai/docs/guides/structured-outputs). The JSON text is read from `choices[0].message.content` and checked with Zod. A direct call aborts after 60 seconds. The analysis call aborts after 180 seconds. `GROK_TIMEOUT_MS` overrides both, up to 600000. The client caps `max_tokens` at 16384. Analysis requests 8192 so a full assessment is not clipped at the old 4096 cap, and a response with `finish_reason=length` is reported as cut off instead of as a schema mismatch. The client retries at most twice (250ms, then 500ms) for HTTP 429, HTTP 5xx, and connection errors. It does not retry a client timeout, HTTP 401, HTTP 403, an invalid-key HTTP 400, or a schema failure. A timeout is category `timeout` with a fixed message. A 403 whose body says the team is out of credits or over its spending limit is `quota_exhausted` with a fixed message. Other 401 and 403 responses are `unauthorized`. Its own log line is a category, a status, and an attempt number.
 
 The workflow calls it from `src/workflows/analyze-control-event.ts` with the client log turned off. The worker then logs only `job=<id> stage=<state> duration_ms=<n>` when a stage finishes. Responses do not include the API key or the prompt.
 
