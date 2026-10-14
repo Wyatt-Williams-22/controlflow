@@ -9,11 +9,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "worker": "tsx src/worker.ts",
+    "worker": "node --conditions=react-server --import tsx src/worker.ts",
     "test": "vitest run",
     "smoke": "node --conditions=react-server --import tsx scripts/smoke-grok.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "next": "^15.5.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -21,6 +22,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.19.11",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",

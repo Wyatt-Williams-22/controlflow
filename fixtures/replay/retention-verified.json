@@ -1,0 +1,136 @@
+{
+  "summary": "Derived cash-flow summaries in underwriting-api have no owner and no retention classification. Document ingestion records both. The retention job deletes raw documents only, and nothing records how long a deletion audit event is kept.",
+  "findings": [
+    {
+      "id": "F-owner-underwriting",
+      "serviceId": "underwriting-api",
+      "requirementId": "REQ-OWNER",
+      "status": "potential_gap",
+      "impactPriority": "high",
+      "rationale": "The cash-flow summary comment says the row has no owner, and the insert does not write one.",
+      "evidence": [
+        {
+          "evidenceId": "EV-underwriting-api-1",
+          "startLine": 3,
+          "endLine": 3,
+          "rationale": "The file states that the row has no owner."
+        }
+      ],
+      "proposedTasks": [
+        {
+          "title": "Record an owner on each cash-flow summary",
+          "ownerTeam": "credit-decisioning",
+          "acceptanceCriteria": "The persisted summary includes an owner that a reviewer can name.",
+          "requiredReviewers": ["records-management"]
+        }
+      ],
+      "unknowns": []
+    },
+    {
+      "id": "F-class-underwriting",
+      "serviceId": "underwriting-api",
+      "requirementId": "REQ-RETENTION-CLASS",
+      "status": "potential_gap",
+      "impactPriority": "high",
+      "rationale": "The insert writes application id, inflow, and captured date. It does not write a retention classification id.",
+      "evidence": [
+        {
+          "evidenceId": "EV-underwriting-api-1",
+          "startLine": 13,
+          "endLine": 17,
+          "rationale": "The inserted columns do not include a classification id."
+        }
+      ],
+      "proposedTasks": [
+        {
+          "title": "Store the policy classification id on the summary",
+          "ownerTeam": "credit-decisioning",
+          "acceptanceCriteria": "The row stores a classification id that exists in the policy config.",
+          "requiredReviewers": ["records-management"]
+        }
+      ],
+      "unknowns": []
+    },
+    {
+      "id": "F-owner-ingestion",
+      "serviceId": "document-ingestion-worker",
+      "requirementId": "REQ-OWNER",
+      "status": "supported_control",
+      "impactPriority": "low",
+      "rationale": "The extracted artifact sets owner to the document-platform constant.",
+      "evidence": [
+        {
+          "evidenceId": "EV-document-ingestion-worker-1",
+          "startLine": 18,
+          "endLine": 18,
+          "rationale": "The returned object sets owner."
+        }
+      ],
+      "proposedTasks": [],
+      "unknowns": []
+    },
+    {
+      "id": "F-class-ingestion",
+      "serviceId": "document-ingestion-worker",
+      "requirementId": "REQ-RETENTION-CLASS",
+      "status": "supported_control",
+      "impactPriority": "low",
+      "rationale": "The artifact stores the classification id derived-underwriting-summary. The duration for that id is only in the policy config.",
+      "evidence": [
+        {
+          "evidenceId": "EV-document-ingestion-worker-1",
+          "startLine": 7,
+          "endLine": 7,
+          "rationale": "The classification id constant is declared here."
+        }
+      ],
+      "proposedTasks": [],
+      "unknowns": []
+    },
+    {
+      "id": "F-coverage",
+      "serviceId": "data-retention-job",
+      "requirementId": "REQ-DELETION-COVERAGE",
+      "status": "potential_gap",
+      "impactPriority": "high",
+      "rationale": "Coverage is the raw-bank-document classification. The comment says derived cash-flow summaries are not in the list.",
+      "evidence": [
+        {
+          "evidenceId": "EV-data-retention-job-1",
+          "startLine": 2,
+          "endLine": 7,
+          "rationale": "The coverage list and the comment exclude derived summaries."
+        }
+      ],
+      "proposedTasks": [
+        {
+          "title": "Add derived underwriting summaries to deletion coverage",
+          "ownerTeam": "data-lifecycle",
+          "acceptanceCriteria": "The coverage list includes the derived-underwriting-summary classification id.",
+          "requiredReviewers": ["records-management", "data-lifecycle"]
+        }
+      ],
+      "unknowns": []
+    },
+    {
+      "id": "F-audit",
+      "serviceId": "data-retention-job",
+      "requirementId": "REQ-AUDIT-EVENT",
+      "status": "insufficient_evidence",
+      "impactPriority": "medium",
+      "rationale": "The job returns a deletion audit event. Neither this file nor the policy config says how long that audit record is kept.",
+      "evidence": [
+        {
+          "evidenceId": "EV-data-retention-job-1",
+          "startLine": 31,
+          "endLine": 33,
+          "rationale": "An audit event is returned, and the function does not record a retention period."
+        }
+      ],
+      "proposedTasks": [],
+      "unknowns": ["The retention period of the deletion audit record is not in the policy config or this file."]
+    }
+  ],
+  "unresolvedQuestions": ["Where is the retention period of a deletion audit record defined?"],
+  "reviewRequired": true
+}

@@ -7,9 +7,13 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
   },
   resolve: {
-    alias: {
-      // The real package throws outside a React Server Component bundle.
-      "server-only": path.resolve(__dirname, "tests/stubs/server-only.ts"),
-    },
+    alias: [
+      {
+        // The real package throws outside a React Server Component bundle.
+        find: "server-only",
+        replacement: path.resolve(__dirname, "tests/stubs/server-only.ts"),
+      },
+      { find: /^@\//, replacement: `${path.resolve(__dirname)}/` },
+    ],
   },
 });

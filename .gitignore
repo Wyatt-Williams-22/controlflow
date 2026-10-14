@@ -9,6 +9,8 @@ coverage
 .env
 .env*.local
 
-# SQLite database created by a later step.
+# SQLite database, including WAL sidecars.
 controlflow.db
 data/*.db
+data/*.db-wal
+data/*.db-shm

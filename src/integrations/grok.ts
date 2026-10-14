@@ -72,6 +72,8 @@ export type GrokClientOptions = {
   model?: string;
   maxRetries?: number;
   env?: { XAI_API_KEY?: string; GROK_MODEL?: string };
+  /** The workflow turns this off. Smoke and unit tests keep the category line. */
+  logFailures?: boolean;
 };
 
 type EnvLike = { XAI_API_KEY?: string; GROK_MODEL?: string };
@@ -103,10 +105,14 @@ export async function completeStructured<T>(
   const sleep = options.sleep ?? defaultSleep;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = options.maxRetries ?? MAX_RETRIES;
+  const reportFailure = (failure: GrokFailure, attempt: number) => {
+    if (options.logFailures === false) return;
+    logFailure(failure, attempt);
+  };
 
   if (!apiKey) {
     const failure = fail("missing_api_key", "XAI_API_KEY is not set");
-    logFailure(failure, 0);
+    reportFailure(failure, 0);
     return failure;
   }
 
@@ -158,20 +164,20 @@ export async function completeStructured<T>(
       );
     } catch (error) {
       lastFailure = fail("network", networkMessage(error));
-      logFailure(lastFailure, attempt);
+      reportFailure(lastFailure, attempt);
       continue;
     }
 
     if (response.ok) {
       const result = await readSuccess(response, args.outputSchema, model);
-      if (!result.ok) logFailure(result, attempt);
+      if (!result.ok) reportFailure(result, attempt);
       return result;
     }
 
     await discardBody(response);
     const category = categoryForStatus(response.status);
     lastFailure = fail(category, httpMessage(category, response.status), response.status);
-    logFailure(lastFailure, attempt);
+    reportFailure(lastFailure, attempt);
     if (!isRetryableStatus(response.status)) return lastFailure;
   }
 
