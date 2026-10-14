@@ -142,10 +142,65 @@ describe("grok client", () => {
     }
   });
 
+  it("classifies an invalid-key HTTP 400 as unauthorized and does not retry", async () => {
+    const body = {
+      code: "invalid-argument",
+      error: `Incorrect API key provided: ${KEY}. You can obtain an API key from https://console.x.ai.`,
+    };
+    const { fetchImpl, calls } = mockFetch(
+      async () => new Response(JSON.stringify(body), { status: 400 }),
+    );
+    const result = await completeStructured(args, options(fetchImpl));
+
+    expect(result).toEqual({
+      ok: false,
+      category: "unauthorized",
+      message: "The API key was rejected.",
+      status: 400,
+    });
+    expect(calls).toHaveLength(1);
+    expect(delays).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(KEY);
+    expect(logs.join("\n")).not.toContain(KEY);
+    expect(logs.join("\n")).toContain("category=unauthorized");
+  });
+
+  it("does not treat a generic invalid-argument 400 as an auth or schema failure", async () => {
+    const { fetchImpl, calls } = mockFetch(
+      async () =>
+        new Response(JSON.stringify({ code: "invalid-argument", error: "model is not available" }), {
+          status: 400,
+        }),
+    );
+    const result = await completeStructured(args, options(fetchImpl));
+    expect(result).toMatchObject({
+      ok: false,
+      category: "bad_request",
+      message: "model API rejected the request (400)",
+      status: 400,
+    });
+    expect(calls).toHaveLength(1);
+    expect(delays).toEqual([]);
+  });
+
   it("does not retry a schema rejection", async () => {
-    const rejected = mockFetch(async () => errorResponse(400));
+    const rejected = mockFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            code: "invalid-argument",
+            error: "response_format json_schema was rejected",
+          }),
+          { status: 400 },
+        ),
+    );
     const httpResult = await completeStructured(args, options(rejected.fetchImpl));
-    expect(httpResult).toMatchObject({ ok: false, category: "schema", status: 400 });
+    expect(httpResult).toMatchObject({
+      ok: false,
+      category: "schema",
+      message: "model API rejected the response schema",
+      status: 400,
+    });
     expect(rejected.calls).toHaveLength(1);
 
     const mismatched = mockFetch(async () => completion(JSON.stringify({ ok: false, echo: "nope" })));
