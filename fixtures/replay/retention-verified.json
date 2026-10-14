@@ -1,5 +1,5 @@
 {
-  "summary": "Derived cash-flow summaries in underwriting-api have no owner and no retention classification. Document ingestion records both. The retention job deletes raw documents only, and nothing records how long a deletion audit event is kept.",
+  "summary": "Derived cash-flow summaries in underwriting-api have no owner and no retention classification. Document ingestion records both. The retention job deletes raw documents only and emits a deletion audit event. Nothing in the packet or the policy config says how long that audit record is kept.",
   "findings": [
     {
       "id": "F-owner-underwriting",
@@ -124,18 +124,36 @@
       "unknowns": []
     },
     {
-      "id": "F-audit",
+      "id": "F-audit-event",
       "serviceId": "data-retention-job",
       "requirementId": "REQ-AUDIT-EVENT",
-      "status": "insufficient_evidence",
-      "impactPriority": "medium",
-      "rationale": "The job returns a deletion audit event. Neither this file nor the policy config says how long that audit record is kept.",
+      "status": "supported_control",
+      "impactPriority": "low",
+      "rationale": "A covered deletion returns a deletion audit event.",
       "evidence": [
         {
           "evidenceId": "EV-data-retention-job-1",
-          "startLine": 31,
-          "endLine": 33,
-          "rationale": "An audit event is returned, and the function does not record a retention period."
+          "startLine": 24,
+          "endLine": 24,
+          "rationale": "deleteCoveredObject returns the result of emitDeletionAudit."
+        }
+      ],
+      "proposedTasks": [],
+      "unknowns": []
+    },
+    {
+      "id": "F-audit-retention",
+      "serviceId": "data-retention-job",
+      "requirementId": "REQ-AUDIT-RETENTION",
+      "status": "insufficient_evidence",
+      "impactPriority": "medium",
+      "rationale": "The file emits a deletion audit event and says it does not record how long that event is kept. The policy config has no retention period for an audit record.",
+      "evidence": [
+        {
+          "evidenceId": "EV-data-retention-job-1",
+          "startLine": 4,
+          "endLine": 4,
+          "rationale": "The file states that it does not say how long the audit event is kept."
         }
       ],
       "proposedTasks": [],

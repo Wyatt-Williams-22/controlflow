@@ -11,6 +11,7 @@ describe("control event schema", () => {
       "REQ-RETENTION-CLASS",
       "REQ-DELETION-COVERAGE",
       "REQ-AUDIT-EVENT",
+      "REQ-AUDIT-RETENTION",
     ]);
   });
 

@@ -237,6 +237,45 @@ describe("finding verifier", () => {
     }
   });
 
+  it("rejects a supported control that lists unknowns", () => {
+    const artifacts = packet().artifacts;
+    const consistent = verifyFindings(
+      assessment([
+        {
+          evidenceId: artifacts[0].evidenceId,
+          startLine: 1,
+          endLine: 1,
+          rationale: "The first line.",
+        },
+      ]),
+      artifacts,
+    );
+    expect(consistent.ok).toBe(true);
+
+    const parsed = assessment([
+      {
+        evidenceId: artifacts[0].evidenceId,
+        startLine: 1,
+        endLine: 1,
+        rationale: "The first line.",
+      },
+    ]);
+    parsed.findings[0].status = "supported_control";
+    parsed.findings[0].unknowns = ["The retention period is not in this file."];
+    const result = verifyFindings(parsed, artifacts);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toEqual([
+        {
+          code: "inconsistent_status",
+          findingId: "F-1",
+          evidenceId: "",
+          message: "finding F-1 is supported_control but lists unknowns",
+        },
+      ]);
+    }
+  });
+
   it("allows an insufficient-evidence finding with no citations", () => {
     const parsed = AssessmentSchema.parse({
       summary: "Audit retention is not in the packet.",

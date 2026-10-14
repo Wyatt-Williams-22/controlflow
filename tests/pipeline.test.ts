@@ -210,7 +210,7 @@ describe("job pipeline", () => {
     const last = good.findings[good.findings.length - 1];
     const duplicate = {
       ...good,
-      findings: [...good.findings, { ...last, id: "F-audit-again", status: "supported_control" }],
+      findings: [...good.findings, { ...last, id: "F-audit-again", status: "supported_control", unknowns: [] }],
     };
     let calls = 0;
     let repairText = "";
@@ -230,7 +230,7 @@ describe("job pipeline", () => {
     expect(calls).toBe(2);
     expect(requestedModel).toBe(DEFAULT_DEEP_GROK_MODEL);
     expect(repairText).toContain("duplicate_finding");
-    expect(repairText).toContain("REQ-AUDIT-EVENT");
+    expect(repairText).toContain(last.requirementId);
     expect(view.state).toBe("awaiting_review");
     expect(view.analysisDepth).toBe("deep");
     expect(view.model).toBe(DEFAULT_DEEP_GROK_MODEL);
@@ -240,6 +240,7 @@ describe("job pipeline", () => {
       ),
     ).toHaveLength(1);
     expect(view.audit.some((entry) => entry.detail.includes(`model=${DEFAULT_DEEP_GROK_MODEL}`))).toBe(true);
+    expect(view.audit.find((entry) => entry.action === "repair_requested")?.detail).toBe("duplicate_finding=1");
   });
 
   it("labels a replay job and checks the saved assessment without calling the model", async () => {
@@ -262,6 +263,13 @@ describe("job pipeline", () => {
     expect(view.assessment?.version).toBe(1);
     expect(view.draftTitle).toBe("[LOCAL DRAFT] Retention control 2026.10-retention: 3 remediation tasks");
     expect(view.assessment?.findings.some((finding) => finding.serviceId === "document-ingestion-worker")).toBe(true);
+    const auditEvent = view.assessment?.findings.find((finding) => finding.requirementId === "REQ-AUDIT-EVENT");
+    const auditRetention = view.assessment?.findings.find((finding) => finding.requirementId === "REQ-AUDIT-RETENTION");
+    expect(auditEvent?.status).toBe("supported_control");
+    expect(auditEvent?.unknowns).toEqual([]);
+    expect(auditRetention?.status).toBe("insufficient_evidence");
+    expect(auditRetention?.serviceId).toBe("data-retention-job");
+    expect(auditRetention?.unknowns.length).toBeGreaterThan(0);
     const owner = view.assessment?.findings.find((finding) => finding.id === "F-owner-underwriting");
     const sourceLine = fs.readFileSync(path.join(repoRoot, "fixtures/repos/underwriting-api/src/persist-cashflow.ts"), "utf8").split("\n")[2];
     expect(owner?.evidence[0]?.excerpt).toBe(sourceLine);
@@ -291,6 +299,7 @@ describe("job pipeline", () => {
     expect(bodies[1]).not.toContain(KEY);
     expect(view.state).toBe("awaiting_review");
     expect(view.assessment?.findings[0]?.evidence[0]?.evidenceId).toBe("EV-underwriting-api-1");
+    expect(view.audit.find((entry) => entry.action === "repair_requested")?.detail).toBe("unknown_evidence=1");
   });
 
   it("accepts no findings when the repair is still invalid", async () => {
@@ -313,6 +322,9 @@ describe("job pipeline", () => {
     expect(view.state).toBe("failed");
     expect(view.errorCategory).toBe("validation_error");
     expect(view.assessment).toBeNull();
+    expect(view.audit.filter((entry) => entry.action === "repair_requested").map((entry) => entry.detail)).toEqual([
+      "unknown_evidence=1",
+    ]);
   });
 
   it("marks an in-flight job interrupted and retries it as a new attempt", async () => {

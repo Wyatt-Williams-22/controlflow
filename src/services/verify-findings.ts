@@ -8,7 +8,13 @@ import { sourceLines } from "./evidence";
  */
 
 export type VerificationError = {
-  code: "unknown_evidence" | "invalid_line_range" | "service_mismatch" | "duplicate_finding" | "missing_service_coverage";
+  code:
+    | "unknown_evidence"
+    | "invalid_line_range"
+    | "service_mismatch"
+    | "duplicate_finding"
+    | "missing_service_coverage"
+    | "inconsistent_status";
   findingId: string;
   evidenceId: string;
   message: string;
@@ -50,6 +56,14 @@ export function verifyFindings(
       });
     } else {
       seen.set(key, finding);
+    }
+    if (finding.status === "supported_control" && finding.unknowns.length > 0) {
+      errors.push({
+        code: "inconsistent_status",
+        findingId: finding.id,
+        evidenceId: "",
+        message: `finding ${finding.id} is supported_control but lists unknowns`,
+      });
     }
     const citations: VerifiedCitation[] = [];
     for (const citation of finding.evidence) {

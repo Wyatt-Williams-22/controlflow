@@ -207,11 +207,8 @@ export default function HomePage() {
               </p>
             ) : null}
             <ol>
-              {job.stages.map((stage, index) => (
-                <li key={`${stage.attempt}-${stage.state}-${index}`}>
-                  attempt {stage.attempt}: {stage.state}
-                  {stage.durationMs !== null ? ` (${stage.durationMs} ms)` : ""}
-                </li>
+              {statusTimeline(job).map((item) => (
+                <li key={item.key}>{item.text}</li>
               ))}
             </ol>
             {job.state === "failed" ? (
@@ -311,6 +308,24 @@ export default function HomePage() {
       ) : null}
     </main>
   );
+}
+
+function statusTimeline(job: JobView): Array<{ key: string; text: string }> {
+  const stages = job.stages.map((stage, index) => ({
+    key: `stage-${stage.attempt}-${stage.state}-${index}`,
+    at: stage.startedAt,
+    text: `attempt ${stage.attempt}: ${stage.state}${stage.durationMs !== null ? ` (${stage.durationMs} ms)` : ""}`,
+  }));
+  const repairs = job.audit
+    .filter((entry) => entry.action === "repair_requested")
+    .map((entry) => ({
+      key: `repair-${entry.id}`,
+      at: entry.createdAt,
+      text: `repair_requested: ${entry.detail}`,
+    }));
+  return [...stages, ...repairs]
+    .sort((left, right) => (left.at < right.at ? -1 : left.at > right.at ? 1 : 0))
+    .map(({ key, text }) => ({ key, text }));
 }
 
 function groupFindings(findings: JobFindingView[]): Array<{ serviceId: string; findings: JobFindingView[] }> {

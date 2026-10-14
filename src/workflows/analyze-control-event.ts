@@ -126,6 +126,7 @@ async function runAttempt(db: AppDatabase, jobId: string, repoRoot: string, grok
   transitionJob(db, jobId, "validating");
   let verified = verifyFindings(assessed.assessment, artifacts, selectedIds);
   if (!verified.ok && job.mode === "live") {
+    recordAudit(db, jobId, "repair_requested", repairAuditDetail(verified.errors));
     const repaired = await askModel(
       input.event,
       loaded.policy,
@@ -309,6 +310,16 @@ function formatArtifact(artifact: EvidenceArtifact): string {
 
 function verificationMessage(errors: readonly VerificationError[]): string {
   return errors.map((error) => error.message).join("; ");
+}
+
+/** Codes and counts only. Finding text and evidence are not stored. */
+function repairAuditDetail(errors: readonly VerificationError[]): string {
+  const counts = new Map<string, number>();
+  for (const error of errors) counts.set(error.code, (counts.get(error.code) ?? 0) + 1);
+  return [...counts.entries()]
+    .sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+    .map(([code, count]) => `${code}=${count}`)
+    .join(" ");
 }
 
 function toFindingViews(findings: readonly VerifiedFinding[]): JobFindingView[] {
