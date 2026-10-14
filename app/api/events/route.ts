@@ -8,6 +8,7 @@ const RequestSchema = z
   .object({
     event: ControlEventSchema,
     mode: z.enum(["live", "replay"]).default("live"),
+    analysisDepth: z.enum(["standard", "deep"]).default("standard"),
   })
   .strict();
 
@@ -38,6 +39,10 @@ export async function POST(request: Request): Promise<Response> {
     id: randomUUID(),
     event: parsed.data.event,
     mode: parsed.data.mode,
+    analysisDepth: parsed.data.analysisDepth,
   });
-  return Response.json({ id: job.id, state: job.state, mode: job.mode }, { status: 201 });
+  return Response.json(
+    { id: job.id, state: job.state, mode: job.mode, analysisDepth: job.analysisDepth },
+    { status: 201 },
+  );
 }

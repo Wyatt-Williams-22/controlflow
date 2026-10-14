@@ -115,12 +115,13 @@ describe("grok client", () => {
     expect(logs).toEqual([]);
   });
 
-  it("uses GROK_MODEL from the environment and defaults to grok-4.7", async () => {
+  it("uses GROK_MODEL from the environment and otherwise uses the standard model", async () => {
     const { fetchImpl, calls } = mockFetch(async () => completion(JSON.stringify({ ok: true, echo: "pong" })));
     await completeStructured(args, options(fetchImpl, { env: { XAI_API_KEY: KEY, GROK_MODEL: "grok-4.5" } }));
     await completeStructured(args, options(fetchImpl, { env: { XAI_API_KEY: KEY } }));
     expect(bodyAt(calls, 0).model).toBe("grok-4.5");
-    expect(bodyAt(calls, 1).model).toBe("grok-4.7");
+    expect(bodyAt(calls, 1).model).toBe(DEFAULT_GROK_MODEL);
+    expect(DEFAULT_GROK_MODEL).toBe("grok-4.20-0309-non-reasoning");
   });
 
   it("does not call the API when the key is missing", async () => {

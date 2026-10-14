@@ -14,6 +14,7 @@ import {
   type JobAssessmentView,
   type JobAuditView,
   type JobFindingView,
+  type AnalysisDepth,
   type JobMode,
   type JobStageView,
   type JobTicketView,
@@ -75,6 +76,8 @@ export type JobRecord = {
   updatedAt: string;
   version: number;
   mode: JobMode;
+  analysisDepth: AnalysisDepth;
+  model: string | null;
 };
 
 export type AppDatabase = Database.Database;
@@ -89,6 +92,8 @@ type JobRow = {
   updated_at: string;
   version: number;
   mode: string;
+  analysis_depth: string;
+  model: string | null;
 };
 
 const SCHEMA = `
@@ -104,7 +109,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL CHECK (version >= 1),
-  mode TEXT NOT NULL CHECK (mode IN ('live', 'replay'))
+  mode TEXT NOT NULL CHECK (mode IN ('live', 'replay')),
+  analysis_depth TEXT NOT NULL DEFAULT 'standard' CHECK (analysis_depth IN ('standard', 'deep')),
+  model TEXT
 );
 
 CREATE TABLE IF NOT EXISTS stage_events (
@@ -171,7 +178,23 @@ export function openDatabase(filename: string): AppDatabase {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
   db.exec(SCHEMA);
+  migrateJobs(db);
   return db;
+}
+
+/** Older local databases were created before analysis depth and model were stored. */
+function migrateJobs(db: AppDatabase): void {
+  const columns = new Set(
+    (db.prepare(`PRAGMA table_info(jobs)`).all() as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!columns.has("analysis_depth")) {
+    db.exec(
+      `ALTER TABLE jobs ADD COLUMN analysis_depth TEXT NOT NULL DEFAULT 'standard' CHECK (analysis_depth IN ('standard', 'deep'))`,
+    );
+  }
+  if (!columns.has("model")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN model TEXT`);
+  }
 }
 
 export function getDatabase(): AppDatabase {
@@ -189,19 +212,23 @@ export function resetDatabaseForTests(): void {
   currentPath = null;
 }
 
-export function createJob(db: AppDatabase, input: { id: string; event: ControlEvent; mode: JobMode }): JobRecord {
+export function createJob(
+  db: AppDatabase,
+  input: { id: string; event: ControlEvent; mode: JobMode; analysisDepth?: AnalysisDepth },
+): JobRecord {
   const now = timestamp();
+  const analysisDepth = input.analysisDepth ?? "standard";
   const insert = db.transaction(() => {
     db.prepare(
       `INSERT INTO jobs (
-        id, state, attempt, error_category, error_message, created_at, updated_at, version, mode
-      ) VALUES (?, 'queued', 1, NULL, NULL, ?, ?, 1, ?)`,
-    ).run(input.id, now, now, input.mode);
+        id, state, attempt, error_category, error_message, created_at, updated_at, version, mode, analysis_depth
+      ) VALUES (?, 'queued', 1, NULL, NULL, ?, ?, 1, ?, ?)`,
+    ).run(input.id, now, now, input.mode, analysisDepth);
     db.prepare(
       `INSERT INTO analysis_inputs (job_id, attempt, event_json, evidence_json, created_at) VALUES (?, 1, ?, '[]', ?)`,
     ).run(input.id, JSON.stringify(input.event), now);
     db.prepare(`INSERT INTO stage_events (job_id, attempt, state, started_at) VALUES (?, 1, 'queued', ?)`).run(input.id, now);
-    recordAudit(db, input.id, "job_created", `mode=${input.mode}`);
+    recordAudit(db, input.id, "job_created", `mode=${input.mode} depth=${analysisDepth}`);
     return getJob(db, input.id);
   });
   const job = insert.immediate();
@@ -286,6 +313,10 @@ export function retryJob(
     return { ok: true as const, job: updated };
   });
   return run.immediate();
+}
+
+export function recordJobModel(db: AppDatabase, id: string, model: string): void {
+  db.prepare(`UPDATE jobs SET model = ?, updated_at = ? WHERE id = ?`).run(model.slice(0, 120), timestamp(), id);
 }
 
 export function readAttemptInput(
@@ -452,6 +483,8 @@ export function readJobView(db: AppDatabase, id: string): JobView | null {
     attempt: job.attempt,
     version: job.version,
     mode: job.mode,
+    analysisDepth: job.analysisDepth,
+    model: job.model,
     replayNotice: job.mode === "replay" ? REPLAY_NOTICE : null,
     errorCategory: job.errorCategory,
     errorMessage: job.errorMessage,
@@ -504,6 +537,9 @@ function closeOpenStage(db: AppDatabase, jobId: string, now: string): void {
 function mapJob(row: JobRow): JobRecord {
   if (!isJobState(row.state)) throw new Error("job row has an unknown state");
   if (row.mode !== "live" && row.mode !== "replay") throw new Error("job row has an unknown mode");
+  if (row.analysis_depth !== "standard" && row.analysis_depth !== "deep") {
+    throw new Error("job row has an unknown analysis depth");
+  }
   return {
     id: row.id,
     state: row.state,
@@ -514,6 +550,8 @@ function mapJob(row: JobRow): JobRecord {
     updatedAt: row.updated_at,
     version: row.version,
     mode: row.mode,
+    analysisDepth: row.analysis_depth,
+    model: row.model,
   };
 }
 

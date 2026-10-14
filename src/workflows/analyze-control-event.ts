@@ -19,6 +19,9 @@ import {
 import {
   ANALYSIS_MAX_TOKENS,
   DEFAULT_ANALYSIS_TIMEOUT_MS,
+  DEFAULT_DEEP_GROK_MODEL,
+  DEFAULT_DEEP_TIMEOUT_MS,
+  DEFAULT_GROK_MODEL,
   completeStructured,
   resolveTimeoutMs,
   type GrokClientOptions,
@@ -31,13 +34,14 @@ import {
   getJob,
   readAttemptInput,
   recordAudit,
+  recordJobModel,
   saveEvidencePacket,
   saveVerifiedAssessment,
   transitionJob,
   type AppDatabase,
   type JobState,
 } from "../storage/db";
-import type { JobFindingView } from "../types/job-view";
+import type { AnalysisDepth, JobFindingView } from "../types/job-view";
 
 /**
  * One attempt: select services, read the allowlisted packet, then either call
@@ -55,7 +59,8 @@ Rules:
 - Do not make legal conclusions. Describe what the files show.
 - reviewRequired must be true.
 - Do not include a confidence score.
-- Keep the summary and each rationale to a few sentences.`;
+- Keep the summary and each rationale to a few sentences.
+- Write at most one finding for each service and requirement. Do not repeat that pair with another status.`;
 
 export type AnalyzeOptions = {
   repoRoot?: string;
@@ -103,7 +108,10 @@ async function runAttempt(db: AppDatabase, jobId: string, repoRoot: string, grok
   saveEvidencePacket(db, jobId, job.attempt, artifacts);
   transitionJob(db, jobId, "analyzing");
 
-  const assessed = job.mode === "replay" ? loadReplay(repoRoot) : await askModel(input.event, loaded.policy, artifacts, grok);
+  const selectedModel = job.mode === "live" ? analysisModel(grok, job.analysisDepth) : null;
+  if (selectedModel) recordJobModel(db, jobId, selectedModel);
+  const assessed =
+    job.mode === "replay" ? loadReplay(repoRoot) : await askModel(input.event, loaded.policy, artifacts, grok, job.analysisDepth);
   if (!assessed.ok) {
     failJob(db, jobId, assessed.category, assessed.message);
     return;
@@ -112,7 +120,7 @@ async function runAttempt(db: AppDatabase, jobId: string, repoRoot: string, grok
   transitionJob(db, jobId, "validating");
   let verified = verifyFindings(assessed.assessment, artifacts);
   if (!verified.ok && job.mode === "live") {
-    const repaired = await askModel(input.event, loaded.policy, artifacts, grok, verified.errors);
+    const repaired = await askModel(input.event, loaded.policy, artifacts, grok, job.analysisDepth, verified.errors);
     if (!repaired.ok) {
       failJob(db, jobId, repaired.category, repaired.message);
       return;
@@ -135,7 +143,12 @@ async function runAttempt(db: AppDatabase, jobId: string, repoRoot: string, grok
       findings,
     });
     transitionJob(db, jobId, "awaiting_review");
-    recordAudit(db, jobId, "assessment_verified", `version=${version} mode=${job.mode}`);
+    recordAudit(
+      db,
+      jobId,
+      "assessment_verified",
+      `version=${version} mode=${job.mode} depth=${job.analysisDepth} model=${selectedModel ?? "none"}`,
+    );
   });
   finish.immediate();
 }
@@ -158,10 +171,23 @@ function loadReferenceData(repoRoot: string): ReferenceData {
 
 type ModelResult = { ok: true; assessment: Assessment } | { ok: false; category: string; message: string };
 
-/** Analysis waits longer than smoke. timeoutMs wins, then GROK_TIMEOUT_MS, then 180 seconds. */
-export function analysisTimeoutMs(grok: GrokClientOptions): number {
+/** timeoutMs wins, then GROK_TIMEOUT_MS, then 180 seconds for standard and 360 seconds for deep. */
+export function analysisTimeoutMs(grok: GrokClientOptions, depth: AnalysisDepth = "standard"): number {
   const envValue = grok.env ? grok.env.GROK_TIMEOUT_MS : process.env.GROK_TIMEOUT_MS;
-  return resolveTimeoutMs(grok.timeoutMs, envValue, DEFAULT_ANALYSIS_TIMEOUT_MS);
+  const fallback = depth === "deep" ? DEFAULT_DEEP_TIMEOUT_MS : DEFAULT_ANALYSIS_TIMEOUT_MS;
+  return resolveTimeoutMs(grok.timeoutMs, envValue, fallback);
+}
+
+/** An explicit grok.model wins. Otherwise standard reads GROK_MODEL and deep reads GROK_DEEP_MODEL. */
+export function analysisModel(grok: GrokClientOptions, depth: AnalysisDepth = "standard"): string {
+  if (grok.model !== undefined && grok.model.trim().length > 0) return grok.model.trim();
+  const env = grok.env ?? { GROK_MODEL: process.env.GROK_MODEL, GROK_DEEP_MODEL: process.env.GROK_DEEP_MODEL };
+  if (depth === "deep") {
+    const deep = (env.GROK_DEEP_MODEL ?? "").trim();
+    return deep || DEFAULT_DEEP_GROK_MODEL;
+  }
+  const standard = (env.GROK_MODEL ?? "").trim();
+  return standard || DEFAULT_GROK_MODEL;
 }
 
 async function askModel(
@@ -169,6 +195,7 @@ async function askModel(
   policy: PolicyConfig,
   artifacts: readonly EvidenceArtifact[],
   grok: GrokClientOptions,
+  depth: AnalysisDepth,
   repairErrors?: readonly VerificationError[],
 ): Promise<ModelResult> {
   const result = await completeStructured(
@@ -180,7 +207,12 @@ async function askModel(
       user: repairErrors ? repairPrompt(event, policy, artifacts, repairErrors) : analysisPrompt(event, policy, artifacts),
       maxTokens: ANALYSIS_MAX_TOKENS,
     },
-    { ...grok, logFailures: false, timeoutMs: analysisTimeoutMs(grok) },
+    {
+      ...grok,
+      logFailures: false,
+      model: analysisModel(grok, depth),
+      timeoutMs: analysisTimeoutMs(grok, depth),
+    },
   );
   if (!result.ok) return { ok: false, category: result.category, message: result.message };
   return { ok: true, assessment: result.data };
@@ -234,8 +266,8 @@ function repairPrompt(
   return [
     analysisPrompt(event, policy, artifacts),
     "",
-    "The previous assessment failed citation checks. Return a full replacement assessment.",
-    "Fix the citations using the errors below. Do not invent evidence IDs or line ranges.",
+    "The previous assessment failed verification. Return a full replacement assessment.",
+    "Fix every error below. Keep one finding per service and requirement. Do not invent evidence IDs or line ranges.",
     JSON.stringify(details),
   ].join("\n");
 }

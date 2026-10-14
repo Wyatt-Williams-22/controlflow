@@ -4,9 +4,12 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import retentionEvent from "../fixtures/control-events/retention-change.json";
 import {
+  DEFAULT_DEEP_MODEL,
+  DEFAULT_STANDARD_MODEL,
   LOCAL_DRAFT_LABEL,
   LOCAL_DRAFT_NOTICE,
   REPLAY_NOTICE,
+  type AnalysisDepth,
   type JobFindingView,
   type JobView,
 } from "../src/types/job-view";
@@ -26,6 +29,7 @@ export default function HomePage() {
   const [description, setDescription] = useState(SEEDED[0].description);
   const [requirementsText, setRequirementsText] = useState(JSON.stringify(SEEDED[0].requirements, null, 2));
   const [mode, setMode] = useState<"live" | "replay">("live");
+  const [analysisDepth, setAnalysisDepth] = useState<AnalysisDepth>("standard");
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<JobView | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -77,6 +81,7 @@ export default function HomePage() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         mode,
+        analysisDepth: mode === "replay" ? "standard" : analysisDepth,
         event: { ...seed.event, description, requirements },
       }),
     });
@@ -153,7 +158,35 @@ export default function HomePage() {
             Replay
           </label>
         </fieldset>
-        <p>Replay loads the saved retention assessment and does not call the model. Live is the default.</p>
+        <fieldset>
+          <legend>Analysis depth</legend>
+          <label>
+            <input
+              type="radio"
+              name="depth"
+              value="standard"
+              checked={analysisDepth === "standard"}
+              disabled={mode === "replay"}
+              onChange={() => setAnalysisDepth("standard")}
+            />
+            Standard
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="depth"
+              value="deep"
+              checked={analysisDepth === "deep"}
+              disabled={mode === "replay"}
+              onChange={() => setAnalysisDepth("deep")}
+            />
+            Deep
+          </label>
+        </fieldset>
+        <p>
+          Standard uses {DEFAULT_STANDARD_MODEL}. Deep uses {DEFAULT_DEEP_MODEL} and can take several minutes. Replay
+          loads the saved retention assessment and does not call a model. Live and standard are the defaults.
+        </p>
         <button type="submit">Analyze</button>
       </form>
       {formError ? <p>{formError}</p> : null}
@@ -165,6 +198,8 @@ export default function HomePage() {
             {job.replayNotice ? <p className="replay">{job.replayNotice}</p> : null}
             <p>
               {job.state} · attempt {job.attempt} · {job.mode}
+              {job.mode === "live" ? ` · ${job.analysisDepth}` : ""}
+              {job.model ? ` · ${job.model}` : ""}
             </p>
             {job.errorCategory ? (
               <p>

@@ -2,6 +2,8 @@ import "server-only";
 
 import { z } from "zod";
 
+import { DEFAULT_DEEP_MODEL, DEFAULT_STANDARD_MODEL } from "../types/job-view";
+
 /**
  * Server-only client for one xAI Chat Completions call.
  *
@@ -12,8 +14,9 @@ import { z } from "zod";
  *   The JSON text comes back on choices[0].message.content.
  *
  * The docs do not set a request timeout. Direct calls, including smoke, abort
- * after 60 seconds unless GROK_TIMEOUT_MS or timeoutMs is set. Analysis uses
- * a longer default (180 seconds) from the workflow.
+ * after 60 seconds unless GROK_TIMEOUT_MS or timeoutMs is set. Standard
+ * analysis uses 180 seconds. Deep analysis uses 360 seconds. GROK_TIMEOUT_MS
+ * still overrides both.
  * Retry up to twice, with exponential backoff, only for HTTP 429, HTTP 5xx,
  * and connection errors. Never retry a client timeout, 401, 403 (including a
  * credits or spending-limit 403), an invalid-key 400, or a schema failure.
@@ -23,12 +26,15 @@ import { z } from "zod";
  */
 
 export const GROK_CHAT_COMPLETIONS_URL = "https://api.x.ai/v1/chat/completions";
-export const DEFAULT_GROK_MODEL = "grok-4.7";
+export const DEFAULT_GROK_MODEL = DEFAULT_STANDARD_MODEL;
+export const DEFAULT_DEEP_GROK_MODEL = DEFAULT_DEEP_MODEL;
 
 /** Used when a caller does not set timeoutMs or GROK_TIMEOUT_MS. Smoke stays on this. */
 export const DEFAULT_CLIENT_TIMEOUT_MS = 60_000;
-/** Analysis calls. One slow structured response can outlast the smoke default. */
+/** Standard analysis. One structured response can outlast the smoke default. */
 export const DEFAULT_ANALYSIS_TIMEOUT_MS = 180_000;
+/** Deep analysis uses the reasoning model, which has taken about three minutes on this packet. */
+export const DEFAULT_DEEP_TIMEOUT_MS = 360_000;
 const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_MAX_TOKENS = 1_024;
 /** Analysis asks for this many tokens. The client cap is higher so a caller can go further. */
@@ -82,18 +88,19 @@ export type GrokClientOptions = {
   apiKey?: string;
   model?: string;
   maxRetries?: number;
-  env?: { XAI_API_KEY?: string; GROK_MODEL?: string; GROK_TIMEOUT_MS?: string };
+  env?: { XAI_API_KEY?: string; GROK_MODEL?: string; GROK_DEEP_MODEL?: string; GROK_TIMEOUT_MS?: string };
   /** The workflow turns this off. Smoke and unit tests keep the category line. */
   logFailures?: boolean;
 };
 
-type EnvLike = { XAI_API_KEY?: string; GROK_MODEL?: string; GROK_TIMEOUT_MS?: string };
+type EnvLike = { XAI_API_KEY?: string; GROK_MODEL?: string; GROK_DEEP_MODEL?: string; GROK_TIMEOUT_MS?: string };
 
 function readEnv(options: GrokClientOptions): EnvLike {
   if (options.env) return options.env;
   return {
     XAI_API_KEY: process.env.XAI_API_KEY,
     GROK_MODEL: process.env.GROK_MODEL,
+    GROK_DEEP_MODEL: process.env.GROK_DEEP_MODEL,
     GROK_TIMEOUT_MS: process.env.GROK_TIMEOUT_MS,
   };
 }

@@ -4,7 +4,16 @@ export const REPLAY_NOTICE = "REPLAY: not a live model call";
 export const LOCAL_DRAFT_LABEL = "LOCAL DRAFT";
 export const LOCAL_DRAFT_NOTICE = "This is a local draft, not a compliance certification.";
 
+/**
+ * Standard is the non-reasoning model. On the retention packet, grok-4.7 took
+ * about 167 seconds and about 14k reasoning tokens, then failed verification.
+ * grok-4.20-0309-non-reasoning finished in 8.5 seconds and passed on the first try.
+ */
+export const DEFAULT_STANDARD_MODEL = "grok-4.20-0309-non-reasoning";
+export const DEFAULT_DEEP_MODEL = "grok-4.7";
+
 export type JobMode = "live" | "replay";
+export type AnalysisDepth = "standard" | "deep";
 
 export type JobStageView = {
   attempt: number;
@@ -77,6 +86,9 @@ export type JobView = {
   attempt: number;
   version: number;
   mode: JobMode;
+  analysisDepth: AnalysisDepth;
+  /** Model that was selected for this job. Null until a live attempt calls the model, and null for replay. */
+  model: string | null;
   replayNotice: typeof REPLAY_NOTICE | null;
   errorCategory: string | null;
   errorMessage: string | null;

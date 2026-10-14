@@ -159,6 +159,43 @@ describe("finding verifier", () => {
     ]);
   });
 
+  it("rejects a second finding for the same service and requirement", () => {
+    const artifacts = packet().artifacts;
+    const citation = {
+      evidenceId: artifacts[0].evidenceId,
+      startLine: 1,
+      endLine: 1,
+      rationale: "The first line.",
+    };
+    const first = assessment([citation]).findings[0];
+    const conflicting = AssessmentSchema.parse({
+      summary: "Two findings cover the same pair.",
+      findings: [first, { ...first, id: "F-2", status: "supported_control" }],
+      unresolvedQuestions: [],
+      reviewRequired: true,
+    });
+    const conflict = verifyFindings(conflicting, artifacts);
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) {
+      expect(conflict.errors).toEqual([
+        {
+          code: "duplicate_finding",
+          findingId: "F-2",
+          evidenceId: "",
+          message: "findings F-1 (potential_gap) and F-2 (supported_control) both cover underwriting-api / REQ-OWNER",
+        },
+      ]);
+    }
+
+    const repeated = AssessmentSchema.parse({
+      ...conflicting,
+      findings: [first, { ...first, id: "F-2" }],
+    });
+    const sameStatus = verifyFindings(repeated, artifacts);
+    expect(sameStatus.ok).toBe(false);
+    if (!sameStatus.ok) expect(sameStatus.errors[0]?.code).toBe("duplicate_finding");
+  });
+
   it("allows an insufficient-evidence finding with no citations", () => {
     const parsed = AssessmentSchema.parse({
       summary: "Audit retention is not in the packet.",

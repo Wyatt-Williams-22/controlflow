@@ -8,7 +8,7 @@ import { sourceLines } from "./evidence";
  */
 
 export type VerificationError = {
-  code: "unknown_evidence" | "invalid_line_range" | "service_mismatch";
+  code: "unknown_evidence" | "invalid_line_range" | "service_mismatch" | "duplicate_finding";
   findingId: string;
   evidenceId: string;
   message: string;
@@ -35,8 +35,21 @@ export function verifyFindings(
   const byId = new Map(artifacts.map((artifact) => [artifact.evidenceId, artifact]));
   const errors: VerificationError[] = [];
   const findings: VerifiedFinding[] = [];
+  const seen = new Map<string, Finding>();
 
   for (const finding of assessment.findings) {
+    const key = `${finding.serviceId}\n${finding.requirementId}`;
+    const previous = seen.get(key);
+    if (previous) {
+      errors.push({
+        code: "duplicate_finding",
+        findingId: finding.id,
+        evidenceId: "",
+        message: `findings ${previous.id} (${previous.status}) and ${finding.id} (${finding.status}) both cover ${finding.serviceId} / ${finding.requirementId}`,
+      });
+    } else {
+      seen.set(key, finding);
+    }
     const citations: VerifiedCitation[] = [];
     for (const citation of finding.evidence) {
       const artifact = byId.get(citation.evidenceId);

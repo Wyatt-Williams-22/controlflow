@@ -12,8 +12,8 @@ import replayAssessment from "../fixtures/replay/retention-verified.json";
 import { TransitionError, assertTransition, countTickets, createJob, getDatabase, resetDatabaseForTests, transitionJob } from "../src/storage/db";
 import { LOCAL_DRAFT_LABEL, LOCAL_DRAFT_NOTICE, REPLAY_NOTICE, type JobView } from "../src/types/job-view";
 import { pollOnce, recoverInterrupted } from "../src/worker";
-import { ANALYSIS_MAX_TOKENS } from "../src/integrations/grok";
-import { analysisTimeoutMs } from "../src/workflows/analyze-control-event";
+import { ANALYSIS_MAX_TOKENS, DEFAULT_DEEP_GROK_MODEL, DEFAULT_GROK_MODEL } from "../src/integrations/grok";
+import { analysisModel, analysisTimeoutMs } from "../src/workflows/analyze-control-event";
 import { loadEvent, repoRoot } from "./helpers";
 
 const KEY = "test-key-do-not-log";
@@ -108,13 +108,26 @@ describe("job pipeline", () => {
 
   it("uses the analysis token budget and does not retry a client timeout", async () => {
     delete process.env.GROK_TIMEOUT_MS;
+    delete process.env.GROK_MODEL;
+    delete process.env.GROK_DEEP_MODEL;
     expect(analysisTimeoutMs({})).toBe(180_000);
+    expect(analysisTimeoutMs({}, "deep")).toBe(360_000);
+    expect(analysisTimeoutMs({ env: { GROK_TIMEOUT_MS: "90000" } }, "deep")).toBe(90_000);
+    expect(analysisModel({ env: {} })).toBe(DEFAULT_GROK_MODEL);
+    expect(analysisModel({ env: {} }, "deep")).toBe(DEFAULT_DEEP_GROK_MODEL);
+    expect(analysisModel({ env: { GROK_DEEP_MODEL: "grok-4.5" } }, "deep")).toBe("grok-4.5");
+    expect(analysisModel({ model: "pinned" }, "deep")).toBe("pinned");
     process.env.GROK_TIMEOUT_MS = "1000";
+    process.env.GROK_MODEL = "from-env";
     expect(analysisTimeoutMs({})).toBe(1_000);
+    expect(analysisModel({})).toBe("from-env");
     expect(analysisTimeoutMs({ env: {} })).toBe(180_000);
+    expect(analysisModel({ env: {} })).toBe(DEFAULT_GROK_MODEL);
     expect(analysisTimeoutMs({ env: { GROK_TIMEOUT_MS: "120000" } })).toBe(120_000);
     expect(analysisTimeoutMs({ timeoutMs: 10, env: { GROK_TIMEOUT_MS: "120000" } })).toBe(10);
     delete process.env.GROK_TIMEOUT_MS;
+    delete process.env.GROK_MODEL;
+    delete process.env.GROK_DEEP_MODEL;
 
     const id = await enqueue("live");
     let calls = 0;
@@ -142,6 +155,10 @@ describe("job pipeline", () => {
     expect(system).toContain("untrusted data");
     expect(system).toContain("Never infer a retention period");
     expect(system).toContain("insufficient_evidence");
+    expect(system).toContain("at most one finding");
+    expect(requestBody?.model).toBe(DEFAULT_GROK_MODEL);
+    expect(view.analysisDepth).toBe("standard");
+    expect(view.model).toBe(DEFAULT_GROK_MODEL);
     expect(user).toContain("EV-underwriting-api-1");
     expect(user).toContain("2555");
     expect(user).toContain("2190");
@@ -172,6 +189,48 @@ describe("job pipeline", () => {
     expect(logs.join("\n")).not.toContain(KEY);
   });
 
+  it("stores the deep model on the job and repairs a duplicate finding once", async () => {
+    const id = await enqueue("live", "deep");
+    const queued = await readJob(id);
+    expect(queued.analysisDepth).toBe("deep");
+    expect(queued.model).toBeNull();
+
+    const good = replayAssessment;
+    const last = good.findings[good.findings.length - 1];
+    const duplicate = {
+      ...good,
+      findings: [...good.findings, { ...last, id: "F-audit-again", status: "supported_control" }],
+    };
+    let calls = 0;
+    let repairText = "";
+    let requestedModel = "";
+    await pollOnce(getDatabase(), {
+      repoRoot,
+      grok: grokOptions(async (_url, init) => {
+        calls += 1;
+        const body = JSON.parse(String(init?.body)) as { model?: string; messages?: Array<{ content: string }> };
+        requestedModel = body.model ?? "";
+        if (calls === 2) repairText = (body.messages ?? []).map((message) => message.content).join("\n");
+        const assessment = calls === 1 ? duplicate : good;
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(assessment) } }] }), { status: 200 });
+      }),
+    });
+    const view = await readJob(id);
+    expect(calls).toBe(2);
+    expect(requestedModel).toBe(DEFAULT_DEEP_GROK_MODEL);
+    expect(repairText).toContain("duplicate_finding");
+    expect(repairText).toContain("REQ-AUDIT-EVENT");
+    expect(view.state).toBe("awaiting_review");
+    expect(view.analysisDepth).toBe("deep");
+    expect(view.model).toBe(DEFAULT_DEEP_GROK_MODEL);
+    expect(
+      view.assessment?.findings.filter(
+        (finding) => finding.serviceId === "data-retention-job" && finding.requirementId === "REQ-AUDIT-EVENT",
+      ),
+    ).toHaveLength(1);
+    expect(view.audit.some((entry) => entry.detail.includes(`model=${DEFAULT_DEEP_GROK_MODEL}`))).toBe(true);
+  });
+
   it("labels a replay job and checks the saved assessment without calling the model", async () => {
     const id = await enqueue("replay");
     let calls = 0;
@@ -185,6 +244,8 @@ describe("job pipeline", () => {
     const view = await readJob(id);
     expect(calls).toBe(0);
     expect(view.mode).toBe("replay");
+    expect(view.analysisDepth).toBe("standard");
+    expect(view.model).toBeNull();
     expect(view.replayNotice).toBe(REPLAY_NOTICE);
     expect(view.state).toBe("awaiting_review");
     expect(view.assessment?.version).toBe(1);
@@ -273,8 +334,8 @@ function grokOptions(fetchImpl: typeof fetch) {
   };
 }
 
-async function enqueue(mode: "live" | "replay"): Promise<string> {
-  const response = await postEvent(jsonRequest({ event: loadEvent(), mode }));
+async function enqueue(mode: "live" | "replay", analysisDepth: "standard" | "deep" = "standard"): Promise<string> {
+  const response = await postEvent(jsonRequest({ event: loadEvent(), mode, analysisDepth }));
   expect(response.status).toBe(201);
   const body = (await response.json()) as { id: string };
   return body.id;
