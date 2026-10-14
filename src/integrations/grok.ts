@@ -13,8 +13,8 @@ import { z } from "zod";
  *
  * The docs do not set a request timeout, so this client aborts after 60 seconds.
  * Retry up to twice, with exponential backoff, only for HTTP 429, HTTP 5xx,
- * and network or timeout errors. Never retry 401, 403, an invalid-key 400,
- * or a schema failure.
+ * and network or timeout errors. Never retry 401, 403 (including a credits
+ * or spending-limit 403), an invalid-key 400, or a schema failure.
  *
  * This file logs a category, a status, and an attempt number. It does not log
  * the API key, the prompt, or the response body.
@@ -33,6 +33,7 @@ const MAX_RESPONSE_CHARS = 1_000_000;
 export const grokErrorCategories = [
   "missing_api_key",
   "unauthorized",
+  "quota_exhausted",
   "rate_limited",
   "server_error",
   "network",
@@ -189,14 +190,20 @@ const ERROR_BODY_CAP = 4_096;
 
 type ErrorSignals = {
   credential: boolean;
+  quota: boolean;
   schema: boolean;
 };
 
+const NO_ERROR_SIGNALS: ErrorSignals = { credential: false, quota: false, schema: false };
+
 function categoryForStatus(status: number, signals: ErrorSignals): GrokErrorCategory {
-  if (status === 401 || status === 403) return "unauthorized";
   if (status === 429) return "rate_limited";
   if (status >= 500 && status <= 599) return "server_error";
-  // xAI uses HTTP 400 for a bad key. Keep 429 and 5xx on the retry path.
+  // A credits or spending-limit 403 uses the same status as a rejected key.
+  // Check the body first, and leave 429 and 5xx on the retry path.
+  if (signals.quota) return "quota_exhausted";
+  if (status === 401 || status === 403) return "unauthorized";
+  // xAI uses HTTP 400 for a bad key.
   if (signals.credential) return "unauthorized";
   // A rejected JSON schema is also HTTP 400. Only call it a schema error when the body says so.
   if (status === 400 && signals.schema) return "schema";
@@ -204,18 +211,20 @@ function categoryForStatus(status: number, signals: ErrorSignals): GrokErrorCate
 }
 
 /**
- * xAI reports a bad key as HTTP 400 with code "invalid-argument" and an
- * "Incorrect API key" message. The code alone is not enough: other bad
- * requests use it too. The phrase is used only to pick a category. It is
- * not copied into the error returned to the UI, because the text can echo
- * the key.
+ * Phrases in the error body pick a category. They are not copied into the
+ * message shown in the UI: xAI can echo the key, and a credits error can
+ * name the team.
+ *
+ * A bad key is HTTP 400, code "invalid-argument", "Incorrect API key".
+ * No credits is HTTP 403, code "permission-denied", with text about used
+ * credits or a spending limit. The code alone is not enough for either case.
  */
 async function readErrorSignals(response: Response): Promise<ErrorSignals> {
   let text = "";
   try {
     text = await response.text();
   } catch {
-    return { credential: false, schema: false };
+    return NO_ERROR_SIGNALS;
   }
   if (text.length > ERROR_BODY_CAP) text = text.slice(0, ERROR_BODY_CAP);
   return signalsFromErrorBody(text);
@@ -223,11 +232,22 @@ async function readErrorSignals(response: Response): Promise<ErrorSignals> {
 
 function signalsFromErrorBody(text: string): ErrorSignals {
   const blob = collectPhrases(text).join("\n").toLowerCase().replace(/[_-]+/g, " ");
-  const credential = looksLikeCredentialFailure(blob);
+  const quota = looksLikeQuotaFailure(blob);
+  const credential = !quota && looksLikeCredentialFailure(blob);
   return {
     credential,
-    schema: !credential && looksLikeSchemaFailure(blob),
+    quota,
+    schema: !credential && !quota && looksLikeSchemaFailure(blob),
   };
+}
+
+function looksLikeQuotaFailure(blob: string): boolean {
+  if (/\bspending limit\b/.test(blob)) return true;
+  if (/\b(?:out of credits|no available credits|insufficient credits|credits exhausted|credits depleted)\b/.test(blob)) {
+    return true;
+  }
+  if (/\bused all\b[\s\S]{0,80}\bcredits?\b/.test(blob)) return true;
+  return /\bcredits?\b[\s\S]{0,80}\b(?:exhausted|depleted|unavailable)\b/.test(blob);
 }
 
 function looksLikeCredentialFailure(blob: string): boolean {
@@ -281,6 +301,7 @@ function fail(category: GrokErrorCategory, message: string, status?: number): Gr
 
 function httpMessage(category: GrokErrorCategory, status: number): string {
   if (category === "unauthorized") return "The API key was rejected.";
+  if (category === "quota_exhausted") return "xAI account has no available credits or hit its spending limit.";
   if (category === "rate_limited") return "model API rate limit exceeded";
   if (category === "server_error") return "model API returned a server error";
   if (category === "schema") return "model API rejected the response schema";

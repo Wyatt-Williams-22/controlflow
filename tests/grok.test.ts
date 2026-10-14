@@ -142,6 +142,51 @@ describe("grok client", () => {
     }
   });
 
+  it("classifies a no-credits HTTP 403 as quota_exhausted and does not retry", async () => {
+    const body = {
+      code: "permission-denied",
+      error: `Your team ${KEY} has either used all available credits or reached its monthly spending limit.`,
+    };
+    const { fetchImpl, calls } = mockFetch(
+      async () => new Response(JSON.stringify(body), { status: 403 }),
+    );
+    const result = await completeStructured(args, options(fetchImpl));
+
+    expect(result).toEqual({
+      ok: false,
+      category: "quota_exhausted",
+      message: "xAI account has no available credits or hit its spending limit.",
+      status: 403,
+    });
+    expect(calls).toHaveLength(1);
+    expect(delays).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(KEY);
+    expect(JSON.stringify(result)).not.toContain("Your team");
+    expect(JSON.stringify(result)).not.toContain("monthly");
+    expect(logs.join("\n")).not.toContain(KEY);
+    expect(logs.join("\n")).not.toContain("Your team");
+    expect(logs.join("\n")).toContain("category=quota_exhausted");
+  });
+
+  it("keeps a permission-denied 403 without billing language as unauthorized", async () => {
+    const { fetchImpl, calls } = mockFetch(
+      async () =>
+        new Response(JSON.stringify({ code: "permission-denied", error: "Request blocked for this model." }), {
+          status: 403,
+        }),
+    );
+    const result = await completeStructured(args, options(fetchImpl));
+    expect(result).toEqual({
+      ok: false,
+      category: "unauthorized",
+      message: "The API key was rejected.",
+      status: 403,
+    });
+    expect(calls).toHaveLength(1);
+    expect(delays).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain("Request blocked");
+  });
+
   it("classifies an invalid-key HTTP 400 as unauthorized and does not retry", async () => {
     const body = {
       code: "invalid-argument",
