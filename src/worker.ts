@@ -2,14 +2,32 @@ import "server-only";
 
 import path from "node:path";
 
-import { analyzeControlEvent, type AnalyzeOptions } from "./workflows/analyze-control-event";
+import { loadEnvConfig } from "@next/env";
+
+import { analyzeControlEvent, analysisModel, type AnalyzeOptions } from "./workflows/analyze-control-event";
 import { claimNextQueued, failInterruptedJobs, getDatabase, type AppDatabase } from "./storage/db";
 
 /**
  * Single-process poller. On startup, a job left in selecting_evidence,
  * analyzing, or validating is marked failed with category interrupted.
  * A queued job is claimed and run. Retry creates a new attempt on that job.
+ *
+ * Env files are loaded the same way Next does. A variable already set in
+ * the shell is left alone. The startup line names the model and says
+ * whether XAI_API_KEY is present. It does not print the key.
  */
+
+/** Development matches `next dev` when NODE_ENV is unset. Production matches `next start`. */
+export function loadWorkerEnv(dir = process.cwd()): void {
+  const dev = process.env.NODE_ENV !== "production";
+  loadEnvConfig(dir, dev);
+}
+
+export function workerStartupLine(): string {
+  const model = analysisModel({});
+  const key = (process.env.XAI_API_KEY ?? "").trim().length > 0 ? "yes" : "no";
+  return `ControlFlow worker started model=${model} key=${key}`;
+}
 
 const POLL_MS = 500;
 
@@ -25,9 +43,10 @@ export function recoverInterrupted(db: AppDatabase): string[] {
 }
 
 async function main(): Promise<void> {
+  loadWorkerEnv();
   const db = getDatabase();
   recoverInterrupted(db);
-  console.log("ControlFlow worker started");
+  console.log(workerStartupLine());
   let stopped = false;
   const stop = () => {
     stopped = true;

@@ -20,6 +20,8 @@ npm run worker
 
 `npm test` does not call xAI. `npm run smoke` makes one real Chat Completions call when `XAI_API_KEY` is set. Copy `.env.example` to `.env.local` and fill in the key. `.env.local` and `data/*.db` are gitignored. When the key is missing, smoke exits with an error and does not print a key.
 
+`npm run worker` loads `.env` and `.env.local` with `@next/env` `loadEnvConfig`, the same files Next loads for that `NODE_ENV`. A variable already set in the shell is not replaced. Startup logs the configured model and `key=yes` or `key=no`. It does not print the key. `next dev` loads those files on its own; the worker is a separate process, so it loads them itself.
+
 `GROK_MODEL` defaults to `grok-4.20-0309-non-reasoning`. On the retention packet, `grok-4.7` took about 167 seconds and about 14k reasoning tokens, then failed verification (`service_mismatch` on one finding, and `REQ-AUDIT-EVENT` twice for `data-retention-job` with conflicting statuses). The non-reasoning model is listed in `/v1/models`, finished in 8.5 seconds, and passed Zod and the verifier on the first try. `GROK_DEEP_MODEL` defaults to `grok-4.7` for a per-job deep run (`analysisDepth: "deep"` on `POST /api/events`, or the Analysis depth control on the page). `GROK_TIMEOUT_MS` overrides the abort deadline for every model call. When it is unset, smoke aborts after 60 seconds, standard analysis after 180 seconds, and deep analysis after 360 seconds. The page shows the depth and the model that ran the job. The dev server and the worker share `data/controlflow.db` (override with `CONTROLFLOW_DB`).
 
 ## Where the Grok call is
