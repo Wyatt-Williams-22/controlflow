@@ -1,0 +1,2 @@
+CANARY-NOT-IN-PACKET
+This note is not on the service allowlist. The evidence reader must not return it.

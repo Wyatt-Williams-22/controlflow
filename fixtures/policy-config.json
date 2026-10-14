@@ -1,0 +1,17 @@
+{
+  "policyVersion": "2026.10-retention",
+  "classifications": [
+    {
+      "id": "derived-underwriting-summary",
+      "dataClass": "derived-underwriting-artifact",
+      "retentionDays": 2555,
+      "deletionMode": "hard-delete"
+    },
+    {
+      "id": "raw-bank-document",
+      "dataClass": "bank-transaction",
+      "retentionDays": 2190,
+      "deletionMode": "hard-delete"
+    }
+  ]
+}

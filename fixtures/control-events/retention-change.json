@@ -1,0 +1,29 @@
+{
+  "id": "retention-change-2026-10",
+  "title": "Retention rules for derived underwriting artifacts",
+  "description": "Derived underwriting artifacts created from bank-transaction data must have an owner, a retention classification, documented deletion coverage, and an auditable deletion event. Retention durations are defined only in the policy config for this policy version.",
+  "policyVersion": "2026.10-retention",
+  "requirements": [
+    {
+      "id": "REQ-OWNER",
+      "text": "Each derived underwriting artifact has a documented owner.",
+      "dataClasses": ["derived-underwriting-artifact"]
+    },
+    {
+      "id": "REQ-RETENTION-CLASS",
+      "text": "Each derived underwriting artifact stores a retention classification id. The duration for that id is defined only in the policy config.",
+      "dataClasses": ["derived-underwriting-artifact"]
+    },
+    {
+      "id": "REQ-DELETION-COVERAGE",
+      "text": "Deletion coverage must include derived underwriting artifacts, not only raw source documents.",
+      "dataClasses": ["derived-underwriting-artifact"]
+    },
+    {
+      "id": "REQ-AUDIT-EVENT",
+      "text": "Deletion of a covered artifact emits an auditable deletion event, and the retention period of that audit record is defined with the classification. The service fixtures do not record how long an audit record is kept.",
+      "dataClasses": ["derived-underwriting-artifact"]
+    }
+  ],
+  "createdAt": "2026-10-14T15:00:00.000Z"
+}
