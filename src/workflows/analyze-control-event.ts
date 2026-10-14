@@ -62,7 +62,7 @@ Rules:
 - Do not include a confidence score.
 - Keep the summary and each rationale to a few sentences.
 - Write at most one finding for each service and requirement. Do not repeat that pair with another status.
-- For every selected service, write one finding for each requirement whose dataClasses apply to that service. If the packet shows the control is in place, use supported_control. If the packet does not answer the requirement, use insufficient_evidence. Use potential_gap only when the packet shows the requirement is not met.
+- For every selected service, write one finding for each requirement whose dataClasses apply to that service. Use supported_control when the packet shows the required behavior. Use potential_gap only when there is positive evidence that the artifact contradicts or omits a required behavior within code it covers. When the required fact, such as a retention period or other config, is simply not in the supplied artifacts, use insufficient_evidence and record it as an unknown. Lack of evidence is not proof of absence.
 - When a finding includes a proposed task, acceptanceCriteria is an array of 2 to 4 concrete testable statements, such as "a unit test asserts the inserted row stores an owner".`;
 
 export type AnalyzeOptions = {

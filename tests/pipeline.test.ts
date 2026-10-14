@@ -161,6 +161,10 @@ describe("job pipeline", () => {
     expect(system).toContain("insufficient_evidence");
     expect(system).toContain("at most one finding");
     expect(system).toContain("supported_control");
+    expect(system).toContain("positive evidence that the artifact contradicts or omits a required behavior within code it covers");
+    expect(system).toContain("record it as an unknown");
+    expect(system).toContain("Lack of evidence is not proof of absence");
+    expect(system).not.toContain("requirement is not met");
     expect(system).toContain("2 to 4 concrete testable statements");
     expect(user).toContain("document-ingestion-worker dataClasses=derived-underwriting-artifact");
     expect(requestBody?.model).toBe(DEFAULT_GROK_MODEL);

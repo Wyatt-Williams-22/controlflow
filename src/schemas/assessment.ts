@@ -129,7 +129,7 @@ const findingJsonSchema = objectSchema({
     type: "string",
     enum: [...FINDING_STATUSES],
     description:
-      "potential_gap: the packet shows the requirement is not met. supported_control: the packet shows it is met. insufficient_evidence: the packet does not cover the question.",
+      "supported_control: the packet shows the required behavior. potential_gap: positive evidence that code the artifact covers contradicts or omits a required behavior. insufficient_evidence: the required fact is not in the supplied artifacts; record it as an unknown. Lack of evidence is not proof of absence.",
   },
   impactPriority: { type: "string", enum: [...IMPACT_PRIORITIES] },
   rationale: stringSchema(LIMITS.rationale),
