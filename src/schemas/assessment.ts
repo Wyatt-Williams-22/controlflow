@@ -47,7 +47,7 @@ const ProposedTaskSchema = z
   .object({
     title: z.string().min(1).max(LIMITS.taskTitle),
     ownerTeam: z.string().min(1).max(LIMITS.team),
-    acceptanceCriteria: z.string().min(1).max(LIMITS.acceptance),
+    acceptanceCriteria: z.array(z.string().min(1).max(LIMITS.acceptance)).min(2).max(4),
     requiredReviewers: z.array(z.string().min(1).max(LIMITS.reviewer)).max(LIMITS.reviewers),
   })
   .strict();
@@ -106,7 +106,14 @@ const citationJsonSchema = objectSchema({
 const taskJsonSchema = objectSchema({
   title: stringSchema(LIMITS.taskTitle),
   ownerTeam: stringSchema(LIMITS.team),
-  acceptanceCriteria: stringSchema(LIMITS.acceptance),
+  acceptanceCriteria: {
+    type: "array",
+    minItems: 2,
+    maxItems: 4,
+    description:
+      "Two to four concrete testable statements. Example: a unit test asserts the inserted row stores an owner.",
+    items: stringSchema(LIMITS.acceptance),
+  },
   requiredReviewers: {
     type: "array",
     items: stringSchema(LIMITS.reviewer),

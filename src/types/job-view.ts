@@ -35,7 +35,7 @@ export type JobEvidenceView = {
 export type JobTaskView = {
   title: string;
   ownerTeam: string;
-  acceptanceCriteria: string;
+  acceptanceCriteria: string[];
   requiredReviewers: string[];
 };
 
@@ -67,6 +67,7 @@ export type DraftTaskView = JobTaskView & {
 
 export type JobTicketView = {
   id: string;
+  title: string;
   label: typeof LOCAL_DRAFT_LABEL;
   notice: typeof LOCAL_DRAFT_NOTICE;
   assessmentVersion: number;
@@ -94,6 +95,8 @@ export type JobView = {
   errorMessage: string | null;
   stages: JobStageView[];
   assessment: JobAssessmentView | null;
+  /** Server-derived draft heading. Null until an assessment exists. */
+  draftTitle: string | null;
   ticket: JobTicketView | null;
   audit: JobAuditView[];
 };

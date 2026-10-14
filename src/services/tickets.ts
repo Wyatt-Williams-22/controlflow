@@ -2,10 +2,12 @@ import "server-only";
 
 import crypto from "node:crypto";
 
+import { draftTitle } from "./draft-title";
 import {
   getJob,
   insertTicket,
   readAssessment,
+  readAttemptInput,
   readTicket,
   recordAudit,
   transitionJob,
@@ -43,11 +45,14 @@ export function approveAssessment(db: AppDatabase, jobId: string, input: Approve
     if (!stored) {
       return { ok: false as const, status: 409 as const, error: "Assessment version was not found." };
     }
+    const tasks = draftTasks(stored.findings);
+    const { event } = readAttemptInput(db, jobId, job.attempt);
     const ticket = insertTicket(db, {
       id: crypto.randomUUID(),
       jobId,
       assessmentVersion: input.assessmentVersion,
-      tasks: draftTasks(stored.findings),
+      title: draftTitle(event.policyVersion, tasks.length),
+      tasks,
     });
     transitionJob(db, jobId, "draft_created");
     recordAudit(db, jobId, "draft_created", `${LOCAL_DRAFT_LABEL} for assessment version ${input.assessmentVersion}`);

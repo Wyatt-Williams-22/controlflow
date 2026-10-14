@@ -75,14 +75,17 @@ describe("job pipeline", () => {
     const second = await approve(id, { approve: true, assessmentVersion: 1 });
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    const firstBody = (await first.json()) as { ticket: { id: string; label: string; notice: string } };
+    const firstBody = (await first.json()) as { ticket: { id: string; title: string; label: string; notice: string } };
     const secondBody = (await second.json()) as { ticket: { id: string } };
     expect(firstBody.ticket.id).toBe(secondBody.ticket.id);
     expect(firstBody.ticket.label).toBe(LOCAL_DRAFT_LABEL);
     expect(firstBody.ticket.notice).toBe(LOCAL_DRAFT_NOTICE);
+    expect(firstBody.ticket.title).toBe("[LOCAL DRAFT] Retention control 2026.10-retention: 3 remediation tasks");
     expect(countTickets(getDatabase(), id)).toBe(1);
     const view = await readJob(id);
     expect(view.state).toBe("draft_created");
+    expect(view.draftTitle).toBe("[LOCAL DRAFT] Retention control 2026.10-retention: 3 remediation tasks");
+    expect(view.ticket?.title).toBe(view.draftTitle);
     expect(view.audit.filter((entry) => entry.action === "draft_created")).toHaveLength(1);
   });
 
@@ -149,6 +152,7 @@ describe("job pipeline", () => {
     expect(view.errorMessage).toBe("The model call timed out.");
     expect(view.assessment).toBeNull();
     expect(requestBody?.max_tokens).toBe(ANALYSIS_MAX_TOKENS);
+    expect(requestBody?.temperature).toBe(0);
     const messages = requestBody?.messages as Array<{ role: string; content: string }>;
     const system = messages.find((message) => message.role === "system")?.content ?? "";
     const user = messages.find((message) => message.role === "user")?.content ?? "";
@@ -156,6 +160,9 @@ describe("job pipeline", () => {
     expect(system).toContain("Never infer a retention period");
     expect(system).toContain("insufficient_evidence");
     expect(system).toContain("at most one finding");
+    expect(system).toContain("supported_control");
+    expect(system).toContain("2 to 4 concrete testable statements");
+    expect(user).toContain("document-ingestion-worker dataClasses=derived-underwriting-artifact");
     expect(requestBody?.model).toBe(DEFAULT_GROK_MODEL);
     expect(view.analysisDepth).toBe("standard");
     expect(view.model).toBe(DEFAULT_GROK_MODEL);
@@ -249,6 +256,8 @@ describe("job pipeline", () => {
     expect(view.replayNotice).toBe(REPLAY_NOTICE);
     expect(view.state).toBe("awaiting_review");
     expect(view.assessment?.version).toBe(1);
+    expect(view.draftTitle).toBe("[LOCAL DRAFT] Retention control 2026.10-retention: 3 remediation tasks");
+    expect(view.assessment?.findings.some((finding) => finding.serviceId === "document-ingestion-worker")).toBe(true);
     const owner = view.assessment?.findings.find((finding) => finding.id === "F-owner-underwriting");
     const sourceLine = fs.readFileSync(path.join(repoRoot, "fixtures/repos/underwriting-api/src/persist-cashflow.ts"), "utf8").split("\n")[2];
     expect(owner?.evidence[0]?.excerpt).toBe(sourceLine);

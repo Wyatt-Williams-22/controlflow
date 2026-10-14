@@ -105,6 +105,7 @@ describe("grok client", () => {
     expect(bodyAt(calls, 0)).toMatchObject({
       model: DEFAULT_GROK_MODEL,
       max_tokens: 16384,
+      temperature: 0,
       response_format: {
         type: "json_schema",
         json_schema: { name: "smoke_pong", schema: echoJsonSchema, strict: true },

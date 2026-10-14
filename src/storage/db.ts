@@ -5,6 +5,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 import { AssessmentSchema, type Assessment } from "../schemas/assessment";
+import { draftTitle } from "../services/draft-title";
 import { ControlEventSchema, type ControlEvent, type EvidenceArtifact } from "../schemas/event";
 import {
   LOCAL_DRAFT_LABEL,
@@ -388,10 +389,10 @@ export function readLatestAssessmentVersion(db: AppDatabase, jobId: string): num
 
 export function insertTicket(
   db: AppDatabase,
-  input: { id: string; jobId: string; assessmentVersion: number; tasks: DraftTaskView[] },
+  input: { id: string; jobId: string; assessmentVersion: number; title: string; tasks: DraftTaskView[] },
 ): JobTicketView {
   const now = timestamp();
-  const ticket = toTicket(input.id, input.assessmentVersion, input.tasks);
+  const ticket = toTicket(input.id, input.assessmentVersion, input.title, input.tasks);
   db.prepare(
     `INSERT INTO tickets (id, job_id, assessment_version, label, draft_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(input.id, input.jobId, input.assessmentVersion, LOCAL_DRAFT_LABEL, JSON.stringify(ticket), now);
@@ -462,6 +463,9 @@ export function readJobView(db: AppDatabase, id: string): JobView | null {
         | { draft_json: string }
         | undefined)
     : undefined;
+  const ticket = ticketRow ? (JSON.parse(ticketRow.draft_json) as JobTicketView) : null;
+  const taskCount = assessment?.findings.reduce((count, finding) => count + finding.proposedTasks.length, 0) ?? 0;
+  const storedEvent = assessment ? readAttemptInput(db, id, job.attempt).event : null;
   const audit = (
     db.prepare(`SELECT id, action, detail, created_at FROM audit_events WHERE job_id = ? ORDER BY id`).all(id) as Array<{
       id: number;
@@ -490,7 +494,8 @@ export function readJobView(db: AppDatabase, id: string): JobView | null {
     errorMessage: job.errorMessage,
     stages,
     assessment,
-    ticket: ticketRow ? (JSON.parse(ticketRow.draft_json) as JobTicketView) : null,
+    draftTitle: ticket?.title ?? (storedEvent ? draftTitle(storedEvent.policyVersion, taskCount) : null),
+    ticket,
     audit,
   };
 }
@@ -559,9 +564,10 @@ function isJobState(value: string): value is JobState {
   return (JOB_STATES as readonly string[]).includes(value);
 }
 
-function toTicket(id: string, assessmentVersion: number, tasks: DraftTaskView[]): JobTicketView {
+function toTicket(id: string, assessmentVersion: number, title: string, tasks: DraftTaskView[]): JobTicketView {
   return {
     id,
+    title,
     label: LOCAL_DRAFT_LABEL,
     notice: LOCAL_DRAFT_NOTICE,
     assessmentVersion,

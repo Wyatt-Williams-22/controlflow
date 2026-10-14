@@ -274,13 +274,17 @@ export default function HomePage() {
 
           {job.assessment ? (
             <section>
-              <h2>{LOCAL_DRAFT_LABEL}</h2>
+              <h2>{job.ticket?.title ?? job.draftTitle ?? LOCAL_DRAFT_LABEL}</h2>
               <p>{LOCAL_DRAFT_NOTICE}</p>
               <ul>
                 {(job.ticket?.tasks ?? tasksFrom(job.assessment.findings)).map((task) => (
                   <li key={`${task.findingId}-${task.title}`}>
                     {task.serviceId}: {task.title} ({task.ownerTeam}). Reviewers: {task.requiredReviewers.join(", ") || "none"}.
-                    Acceptance: {task.acceptanceCriteria}
+                    <ul>
+                      {task.acceptanceCriteria.map((criterion) => (
+                        <li key={criterion}>{criterion}</li>
+                      ))}
+                    </ul>
                   </li>
                 ))}
               </ul>

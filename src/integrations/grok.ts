@@ -170,6 +170,9 @@ export async function completeStructured<T>(
       { role: "user", content: args.user },
     ],
     max_tokens: boundedMaxTokens(args.maxTokens),
+    // POST /v1/chat/completions accepts temperature from 0 to 2. 0 is the focused end of that range.
+    // top_p is left unset: the docs say to change temperature or top_p, not both.
+    temperature: 0,
     response_format: {
       type: "json_schema",
       json_schema: {

@@ -196,6 +196,47 @@ describe("finding verifier", () => {
     if (!sameStatus.ok) expect(sameStatus.errors[0]?.code).toBe("duplicate_finding");
   });
 
+  it("rejects a selected service that has no findings", () => {
+    const artifacts = packet().artifacts;
+    const covered = verifyFindings(
+      assessment([
+        {
+          evidenceId: artifacts[0].evidenceId,
+          startLine: 1,
+          endLine: 1,
+          rationale: "The first line.",
+        },
+      ]),
+      artifacts,
+      ["underwriting-api"],
+    );
+    expect(covered.ok).toBe(true);
+
+    const missing = verifyFindings(
+      assessment([
+        {
+          evidenceId: artifacts[0].evidenceId,
+          startLine: 1,
+          endLine: 1,
+          rationale: "The first line.",
+        },
+      ]),
+      artifacts,
+      ["underwriting-api", "document-ingestion-worker"],
+    );
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) {
+      expect(missing.errors).toEqual([
+        {
+          code: "missing_service_coverage",
+          findingId: "",
+          evidenceId: "",
+          message: "selected service document-ingestion-worker has no findings",
+        },
+      ]);
+    }
+  });
+
   it("allows an insufficient-evidence finding with no citations", () => {
     const parsed = AssessmentSchema.parse({
       summary: "Audit retention is not in the packet.",

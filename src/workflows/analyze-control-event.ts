@@ -15,6 +15,7 @@ import {
   type ControlEvent,
   type EvidenceArtifact,
   type PolicyConfig,
+  type ServiceCatalogEntry,
 } from "../schemas/event";
 import {
   ANALYSIS_MAX_TOKENS,
@@ -60,7 +61,9 @@ Rules:
 - reviewRequired must be true.
 - Do not include a confidence score.
 - Keep the summary and each rationale to a few sentences.
-- Write at most one finding for each service and requirement. Do not repeat that pair with another status.`;
+- Write at most one finding for each service and requirement. Do not repeat that pair with another status.
+- For every selected service, write one finding for each requirement whose dataClasses apply to that service. If the packet shows the control is in place, use supported_control. If the packet does not answer the requirement, use insufficient_evidence. Use potential_gap only when the packet shows the requirement is not met.
+- When a finding includes a proposed task, acceptanceCriteria is an array of 2 to 4 concrete testable statements, such as "a unit test asserts the inserted row stores an owner".`;
 
 export type AnalyzeOptions = {
   repoRoot?: string;
@@ -110,22 +113,33 @@ async function runAttempt(db: AppDatabase, jobId: string, repoRoot: string, grok
 
   const selectedModel = job.mode === "live" ? analysisModel(grok, job.analysisDepth) : null;
   if (selectedModel) recordJobModel(db, jobId, selectedModel);
+  const selectedIds = selected.map((service) => service.id);
   const assessed =
-    job.mode === "replay" ? loadReplay(repoRoot) : await askModel(input.event, loaded.policy, artifacts, grok, job.analysisDepth);
+    job.mode === "replay"
+      ? loadReplay(repoRoot)
+      : await askModel(input.event, loaded.policy, selected, artifacts, grok, job.analysisDepth);
   if (!assessed.ok) {
     failJob(db, jobId, assessed.category, assessed.message);
     return;
   }
 
   transitionJob(db, jobId, "validating");
-  let verified = verifyFindings(assessed.assessment, artifacts);
+  let verified = verifyFindings(assessed.assessment, artifacts, selectedIds);
   if (!verified.ok && job.mode === "live") {
-    const repaired = await askModel(input.event, loaded.policy, artifacts, grok, job.analysisDepth, verified.errors);
+    const repaired = await askModel(
+      input.event,
+      loaded.policy,
+      selected,
+      artifacts,
+      grok,
+      job.analysisDepth,
+      verified.errors,
+    );
     if (!repaired.ok) {
       failJob(db, jobId, repaired.category, repaired.message);
       return;
     }
-    verified = verifyFindings(repaired.assessment, artifacts);
+    verified = verifyFindings(repaired.assessment, artifacts, selectedIds);
     if (verified.ok) assessed.assessment = repaired.assessment;
   }
 
@@ -193,6 +207,7 @@ export function analysisModel(grok: GrokClientOptions, depth: AnalysisDepth = "s
 async function askModel(
   event: ControlEvent,
   policy: PolicyConfig,
+  services: readonly ServiceCatalogEntry[],
   artifacts: readonly EvidenceArtifact[],
   grok: GrokClientOptions,
   depth: AnalysisDepth,
@@ -204,7 +219,9 @@ async function askModel(
       jsonSchema: assessmentJsonSchema,
       outputSchema: AssessmentSchema,
       system: SYSTEM_PROMPT,
-      user: repairErrors ? repairPrompt(event, policy, artifacts, repairErrors) : analysisPrompt(event, policy, artifacts),
+      user: repairErrors
+        ? repairPrompt(event, policy, services, artifacts, repairErrors)
+        : analysisPrompt(event, policy, services, artifacts),
       maxTokens: ANALYSIS_MAX_TOKENS,
     },
     {
@@ -228,7 +245,12 @@ function loadReplay(repoRoot: string): ModelResult {
   }
 }
 
-function analysisPrompt(event: ControlEvent, policy: PolicyConfig, artifacts: readonly EvidenceArtifact[]): string {
+function analysisPrompt(
+  event: ControlEvent,
+  policy: PolicyConfig,
+  services: readonly ServiceCatalogEntry[],
+  artifacts: readonly EvidenceArtifact[],
+): string {
   // createdAt, content hashes, and capture times are not evidence the model can cite.
   const eventForModel = {
     id: event.id,
@@ -244,6 +266,11 @@ function analysisPrompt(event: ControlEvent, policy: PolicyConfig, artifacts: re
     "POLICY CONFIG",
     JSON.stringify(policy),
     "",
+    "SELECTED SERVICES",
+    services
+      .map((service) => `${service.id} dataClasses=${service.dataClasses.join(",")}`)
+      .join("\n") || "(none)",
+    "",
     "EVIDENCE PACKET",
     artifacts.length === 0
       ? "(none)"
@@ -254,6 +281,7 @@ function analysisPrompt(event: ControlEvent, policy: PolicyConfig, artifacts: re
 function repairPrompt(
   event: ControlEvent,
   policy: PolicyConfig,
+  services: readonly ServiceCatalogEntry[],
   artifacts: readonly EvidenceArtifact[],
   errors: readonly VerificationError[],
 ): string {
@@ -264,10 +292,10 @@ function repairPrompt(
     message: error.message,
   }));
   return [
-    analysisPrompt(event, policy, artifacts),
+    analysisPrompt(event, policy, services, artifacts),
     "",
     "The previous assessment failed verification. Return a full replacement assessment.",
-    "Fix every error below. Keep one finding per service and requirement. Do not invent evidence IDs or line ranges.",
+    "Fix every error below. Every selected service needs a finding for each requirement whose dataClasses apply to it. Do not invent evidence IDs or line ranges.",
     JSON.stringify(details),
   ].join("\n");
 }

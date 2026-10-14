@@ -8,7 +8,7 @@ import { sourceLines } from "./evidence";
  */
 
 export type VerificationError = {
-  code: "unknown_evidence" | "invalid_line_range" | "service_mismatch" | "duplicate_finding";
+  code: "unknown_evidence" | "invalid_line_range" | "service_mismatch" | "duplicate_finding" | "missing_service_coverage";
   findingId: string;
   evidenceId: string;
   message: string;
@@ -31,6 +31,7 @@ export type VerifyResult =
 export function verifyFindings(
   assessment: Assessment,
   artifacts: readonly EvidenceArtifact[],
+  selectedServiceIds: readonly string[] = [],
 ): VerifyResult {
   const byId = new Map(artifacts.map((artifact) => [artifact.evidenceId, artifact]));
   const errors: VerificationError[] = [];
@@ -89,6 +90,17 @@ export function verifyFindings(
       });
     }
     findings.push({ ...finding, evidence: citations });
+  }
+
+  const covered = new Set(assessment.findings.map((finding) => finding.serviceId));
+  for (const serviceId of selectedServiceIds) {
+    if (covered.has(serviceId)) continue;
+    errors.push({
+      code: "missing_service_coverage",
+      findingId: "",
+      evidenceId: "",
+      message: `selected service ${serviceId} has no findings`,
+    });
   }
 
   if (errors.length > 0) return { ok: false, errors };

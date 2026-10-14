@@ -32,7 +32,10 @@ function sampleAssessment(): Assessment {
           {
             title: "Store the classification id on the summary",
             ownerTeam: "credit-decisioning",
-            acceptanceCriteria: "The row stores a classification id from the policy config.",
+            acceptanceCriteria: [
+              "A unit test asserts the inserted row stores a classification id.",
+              "That id is one of the ids in the policy config.",
+            ],
             requiredReviewers: ["records-management"],
           },
         ],
@@ -90,5 +93,27 @@ describe("assessment schema", () => {
       type: "boolean",
       const: true,
     });
+    const criteria = findings.properties?.proposedTasks as { items?: JsonObject } | undefined;
+    const acceptance = (criteria?.items?.properties as { acceptanceCriteria?: JsonObject } | undefined)?.acceptanceCriteria;
+    expect(acceptance?.type).toBe("array");
+    expect((acceptance as { minItems?: number } | undefined)?.minItems).toBe(2);
+    expect((acceptance as { maxItems?: number } | undefined)?.maxItems).toBe(4);
+  });
+
+  it("requires two to four acceptance criteria on a task", () => {
+    const assessment = sampleAssessment();
+    const task = assessment.findings[0].proposedTasks[0];
+    expect(AssessmentSchema.safeParse(assessment).success).toBe(true);
+    const one = structuredClone(assessment);
+    one.findings[0].proposedTasks[0].acceptanceCriteria = [task.acceptanceCriteria[0]];
+    expect(AssessmentSchema.safeParse(one).success).toBe(false);
+    const five = structuredClone(assessment);
+    five.findings[0].proposedTasks[0].acceptanceCriteria = [
+      ...task.acceptanceCriteria,
+      "A unit test asserts a third check.",
+      "A unit test asserts a fourth check.",
+      "A unit test asserts a fifth check.",
+    ];
+    expect(AssessmentSchema.safeParse(five).success).toBe(false);
   });
 });
