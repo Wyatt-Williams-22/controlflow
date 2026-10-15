@@ -124,11 +124,15 @@ export default function HomePage() {
 
   return (
     <main>
-      <p className="banner">SYNTHETIC DATA</p>
-      <h1>ControlFlow</h1>
-      <p>Start the worker in a second terminal (`npm run worker`). This page polls the job.</p>
+      <header className="site-header">
+        <p className="banner">SYNTHETIC DATA</p>
+        <h1>ControlFlow</h1>
+        <p className="subtitle">Compliance change impact intelligence · Grok API</p>
+        <hr className="rule" />
+        <p className="lede">Start the worker in a second terminal (`npm run worker`). This page polls the job.</p>
+      </header>
 
-      <form onSubmit={(event) => void onAnalyze(event)}>
+      <form className="card" onSubmit={(event) => void onAnalyze(event)}>
         <label>
           Seeded event
           <select value={seedId} onChange={(event) => selectSeed(event.target.value)}>
@@ -183,32 +187,45 @@ export default function HomePage() {
             Deep
           </label>
         </fieldset>
-        <p>
+        <p className="hint">
           Standard uses {DEFAULT_STANDARD_MODEL}. Deep uses {DEFAULT_DEEP_MODEL} and can take several minutes. Replay
           loads the saved retention assessment and does not call a model. Live and standard are the defaults.
         </p>
         <button type="submit">Analyze</button>
       </form>
-      {formError ? <p>{formError}</p> : null}
+      {formError ? <p className="form-error">{formError}</p> : null}
 
       {job ? (
         <>
-          <section>
+          <section className="panel">
             <h2>Status</h2>
             {job.replayNotice ? <p className="replay">{job.replayNotice}</p> : null}
-            <p>
-              {job.state} · attempt {job.attempt} · {job.mode}
-              {job.mode === "live" ? ` · ${job.analysisDepth}` : ""}
-              {job.model ? ` · ${job.model}` : ""}
+            <p className="status-line">
+              <span className={job.state === "failed" ? "pill pill-failed" : "pill"}>{job.state}</span>
+              <span className="mono">
+                {job.state} · attempt {job.attempt} · {job.mode}
+                {job.mode === "live" ? ` · ${job.analysisDepth}` : ""}
+                {job.model ? ` · ${job.model}` : ""}
+              </span>
             </p>
             {job.errorCategory ? (
-              <p>
+              <p className="error-line">
                 {job.errorCategory}: {job.errorMessage}
               </p>
             ) : null}
-            <ol>
+            <ol className="timeline">
               {statusTimeline(job).map((item) => (
-                <li key={item.key}>{item.text}</li>
+                <li key={item.key}>
+                  {item.state ? (
+                    <>
+                      <span>attempt {item.attempt}:</span>
+                      <span className={item.state === "failed" ? "pill pill-failed" : "pill"}>{item.state}</span>
+                      {item.durationMs !== null ? <span>({item.durationMs} ms)</span> : null}
+                    </>
+                  ) : (
+                    item.text
+                  )}
+                </li>
               ))}
             </ol>
             {job.state === "failed" ? (
@@ -219,28 +236,35 @@ export default function HomePage() {
           </section>
 
           {job.assessment ? (
-            <section>
+            <section className="panel">
               <h2>Assessment</h2>
               <p>{job.assessment.summary}</p>
               {groupFindings(job.assessment.findings).map((group) => (
                 <section key={group.serviceId}>
-                  <h3>{group.serviceId}</h3>
+                  <h3 className="service-title">{group.serviceId}</h3>
                   {group.findings.map((finding) => (
-                    <article key={finding.id}>
-                      <p>
-                        {finding.requirementId}: {finding.status}, {finding.impactPriority}
+                    <article key={finding.id} className="finding">
+                      <p className="finding-line">
+                        <span className="req-id">{finding.requirementId}</span>
+                        <span className="sep">:</span>
+                        <span className={`pill pill-${finding.status}`}>{finding.status}</span>
+                        <span className="sep">,</span>
+                        <span className={`pill pill-${finding.impactPriority}`}>{finding.impactPriority}</span>
                       </p>
                       <p>{finding.rationale}</p>
                       {finding.evidence.map((citation) => (
                         <details key={`${citation.evidenceId}-${citation.startLine}`}>
                           <summary>
-                            {citation.relativePath} lines {citation.startLine}-{citation.endLine}
+                            <span className="ev-id">{citation.evidenceId}</span>
+                            <span>
+                              {citation.relativePath} lines {citation.startLine}-{citation.endLine}
+                            </span>
                           </summary>
                           <pre>{citation.excerpt}</pre>
                         </details>
                       ))}
                       {finding.unknowns.length > 0 ? (
-                        <div>
+                        <div className="unknowns">
                           <p>Unknowns</p>
                           <ul>
                             {finding.unknowns.map((unknown) => (
@@ -250,7 +274,9 @@ export default function HomePage() {
                         </div>
                       ) : null}
                       {finding.proposedTasks.flatMap((task) => task.requiredReviewers).length > 0 ? (
-                        <p>Reviewers: {finding.proposedTasks.flatMap((task) => task.requiredReviewers).join(", ")}</p>
+                        <p className="reviewers">
+                          Reviewers: {finding.proposedTasks.flatMap((task) => task.requiredReviewers).join(", ")}
+                        </p>
                       ) : null}
                     </article>
                   ))}
@@ -259,7 +285,7 @@ export default function HomePage() {
               {job.assessment.unresolvedQuestions.length > 0 ? (
                 <div>
                   <h3>Unresolved questions</h3>
-                  <ul>
+                  <ul className="questions">
                     {job.assessment.unresolvedQuestions.map((question) => (
                       <li key={question}>{question}</li>
                     ))}
@@ -270,13 +296,14 @@ export default function HomePage() {
           ) : null}
 
           {job.assessment ? (
-            <section>
+            <section className="panel">
               <h2>{job.ticket?.title ?? job.draftTitle ?? LOCAL_DRAFT_LABEL}</h2>
-              <p>{LOCAL_DRAFT_NOTICE}</p>
-              <ul>
+              <p className="notice">{LOCAL_DRAFT_NOTICE}</p>
+              <ul className="task-list">
                 {(job.ticket?.tasks ?? tasksFrom(job.assessment.findings)).map((task) => (
-                  <li key={`${task.findingId}-${task.title}`}>
-                    {task.serviceId}: {task.title} ({task.ownerTeam}). Reviewers: {task.requiredReviewers.join(", ") || "none"}.
+                  <li key={`${task.findingId}-${task.title}`} className="task">
+                    <span className="mono">{task.serviceId}</span>: {task.title} ({task.ownerTeam}). Reviewers:{" "}
+                    {task.requiredReviewers.join(", ") || "none"}.
                     <ul>
                       {task.acceptanceCriteria.map((criterion) => (
                         <li key={criterion}>{criterion}</li>
@@ -290,16 +317,16 @@ export default function HomePage() {
                   Approve
                 </button>
               ) : null}
-              {job.ticket ? <p>Draft {job.ticket.id}</p> : null}
+              {job.ticket ? <p className="draft-id">Draft {job.ticket.id}</p> : null}
             </section>
           ) : null}
 
-          <section>
+          <section className="panel">
             <h2>Audit</h2>
-            <ol>
+            <ol className="audit">
               {job.audit.map((entry) => (
                 <li key={entry.id}>
-                  {entry.createdAt} {entry.action}: {entry.detail}
+                  <span className="muted">{entry.createdAt}</span> {entry.action}: {entry.detail}
                 </li>
               ))}
             </ol>
@@ -310,11 +337,20 @@ export default function HomePage() {
   );
 }
 
-function statusTimeline(job: JobView): Array<{ key: string; text: string }> {
+function statusTimeline(job: JobView): Array<{
+  key: string;
+  text: string;
+  state: string | null;
+  attempt: number | null;
+  durationMs: number | null;
+}> {
   const stages = job.stages.map((stage, index) => ({
     key: `stage-${stage.attempt}-${stage.state}-${index}`,
     at: stage.startedAt,
     text: `attempt ${stage.attempt}: ${stage.state}${stage.durationMs !== null ? ` (${stage.durationMs} ms)` : ""}`,
+    state: stage.state,
+    attempt: stage.attempt,
+    durationMs: stage.durationMs,
   }));
   const repairs = job.audit
     .filter((entry) => entry.action === "repair_requested")
@@ -322,10 +358,13 @@ function statusTimeline(job: JobView): Array<{ key: string; text: string }> {
       key: `repair-${entry.id}`,
       at: entry.createdAt,
       text: `repair_requested: ${entry.detail}`,
+      state: null,
+      attempt: null,
+      durationMs: null,
     }));
   return [...stages, ...repairs]
     .sort((left, right) => (left.at < right.at ? -1 : left.at > right.at ? 1 : 0))
-    .map(({ key, text }) => ({ key, text }));
+    .map(({ key, text, state, attempt, durationMs }) => ({ key, text, state, attempt, durationMs }));
 }
 
 function groupFindings(findings: JobFindingView[]): Array<{ serviceId: string; findings: JobFindingView[] }> {
