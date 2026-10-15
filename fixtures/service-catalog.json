@@ -1,0 +1,40 @@
+{
+  "services": [
+    {
+      "id": "underwriting-api",
+      "name": "Underwriting API",
+      "ownerTeam": "credit-decisioning",
+      "tags": ["underwriting", "cash-flow"],
+      "dataClasses": ["derived-underwriting-artifact"],
+      "fixtureRoot": "fixtures/repos/underwriting-api",
+      "allowlistedFiles": ["src/persist-cashflow.ts"]
+    },
+    {
+      "id": "document-ingestion-worker",
+      "name": "Document ingestion worker",
+      "ownerTeam": "document-platform",
+      "tags": ["ingestion", "documents"],
+      "dataClasses": ["derived-underwriting-artifact"],
+      "fixtureRoot": "fixtures/repos/document-ingestion-worker",
+      "allowlistedFiles": ["src/classify-artifact.ts"]
+    },
+    {
+      "id": "data-retention-job",
+      "name": "Data retention job",
+      "ownerTeam": "data-lifecycle",
+      "tags": ["retention", "deletion"],
+      "dataClasses": ["derived-underwriting-artifact", "bank-transaction"],
+      "fixtureRoot": "fixtures/repos/data-retention-job",
+      "allowlistedFiles": ["src/delete-covered.ts"]
+    },
+    {
+      "id": "marketing-email-service",
+      "name": "Marketing email service",
+      "ownerTeam": "growth",
+      "tags": ["marketing", "email"],
+      "dataClasses": ["marketing-contact"],
+      "fixtureRoot": "fixtures/repos/marketing-email-service",
+      "allowlistedFiles": []
+    }
+  ]
+}

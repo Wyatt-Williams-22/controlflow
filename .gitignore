@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+dist
+coverage
+*.tsbuildinfo
+
+# Local secrets. .env.example is the committed template.
+.env
+.env*.local
+
+# SQLite database, including WAL sidecars.
+controlflow.db
+data/*.db
+data/*.db-wal
+data/*.db-shm
